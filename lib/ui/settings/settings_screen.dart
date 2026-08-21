@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'export_report_screen.dart';
 
+import '../vehicles/vehicle_list_screen.dart';
+
 final themeModeProvider = StateProvider<ThemeMode>((ref) => ThemeMode.system);
 
 class SettingsScreen extends ConsumerWidget {
@@ -50,6 +52,25 @@ class SettingsScreen extends ConsumerWidget {
                 ),
               ],
             ),
+          ),
+          const Divider(),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 16, 16, 8),
+            child: Text(
+              'Vehicles & Mileage',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.blue),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.two_wheeler),
+            title: const Text('Manage & Edit Vehicles'),
+            subtitle: const Text('Add vehicles, set default fuel price & edit estimates'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (context) => const VehicleListScreen()),
+              );
+            },
           ),
           const Divider(),
           const Padding(

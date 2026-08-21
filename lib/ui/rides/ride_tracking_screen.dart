@@ -6,6 +6,8 @@ import '../../domain/models/ride.dart';
 import '../../domain/models/vehicle.dart';
 import '../../providers/providers.dart';
 
+import '../widgets/travel_route_map_widget.dart';
+
 class RideTrackingScreen extends ConsumerStatefulWidget {
   const RideTrackingScreen({super.key});
 
@@ -23,9 +25,15 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
   String _paidBy = 'ME'; // 'ME' or friendId
   final Set<String> _selectedParticipantIds = {'ME'}; // 'ME' + friend IDs
 
-  // Simulation of GPS tracking
+  // Simulation of GPS tracking & Route Map
   bool _isTracking = false;
   double _gpsDistanceKm = 0.0;
+  final List<RoutePoint> _gpsRoutePoints = [
+    RoutePoint(18.5204, 73.8567, label: 'Start'),
+    RoutePoint(18.5310, 73.8640),
+    RoutePoint(18.5420, 73.8750),
+    RoutePoint(18.5580, 73.8910, label: 'Current'),
+  ];
 
   @override
   void dispose() {
@@ -38,15 +46,21 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
     setState(() {
       _isTracking = true;
       _gpsDistanceKm = 0.0;
+      _gpsRoutePoints.clear();
+      _gpsRoutePoints.add(RoutePoint(18.5204, 73.8567, label: 'Start'));
     });
   }
 
   void _stopGpsTracking() {
     setState(() {
       _isTracking = false;
-      // Simulate recorded distance if 0
       if (_gpsDistanceKm == 0.0) {
         _gpsDistanceKm = 14.5;
+        _gpsRoutePoints.addAll([
+          RoutePoint(18.5310, 73.8640),
+          RoutePoint(18.5420, 73.8750),
+          RoutePoint(18.5580, 73.8910, label: 'Destination'),
+        ]);
       }
     });
   }
@@ -177,8 +191,14 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                     ),
                     const SizedBox(height: 16),
 
-                    // GPS Mode UI
+                    // GPS Mode UI & Travel Map Section
                     if (_trackingMode == 'GPS') ...[
+                      TravelRouteMapWidget(
+                        routePoints: _gpsRoutePoints,
+                        currentDistanceKm: _gpsDistanceKm,
+                        isLiveTracking: _isTracking,
+                      ),
+                      const SizedBox(height: 12),
                       Card(
                         color: _isTracking ? Colors.green.shade50 : Colors.blue.shade50,
                         child: Padding(
@@ -195,7 +215,7 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                               ),
                               const SizedBox(height: 8),
                               Text(
-                                _isTracking ? 'Tracking GPS distance...' : 'GPS Stopped',
+                                _isTracking ? 'Tracking GPS distance & mapping route...' : 'GPS Stopped',
                                 style: const TextStyle(fontSize: 14),
                               ),
                               const SizedBox(height: 12),
