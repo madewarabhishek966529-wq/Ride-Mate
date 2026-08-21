@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:csv/csv.dart';
+import 'package:flutter/foundation.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
@@ -174,6 +175,16 @@ class ExportService {
     required List<int> bytes,
     required String fileName,
   }) async {
+    if (kIsWeb) {
+      final xFile = XFile.fromData(
+        Uint8List.fromList(bytes),
+        name: fileName,
+        mimeType: fileName.endsWith('.csv') ? 'text/csv' : 'application/pdf',
+      );
+      await Share.shareXFiles([xFile], text: 'RideMate Monthly Expense Report');
+      return fileName;
+    }
+
     final tempDir = await getTemporaryDirectory();
     final file = File('${tempDir.path}/$fileName');
     await file.writeAsBytes(bytes);

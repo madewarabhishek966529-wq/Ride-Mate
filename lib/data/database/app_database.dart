@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 
@@ -21,6 +22,13 @@ class AppDatabase {
   }
 
   static Future<Database> _initDb(String filePath) async {
+    if (kIsWeb) {
+      return await openDatabase(
+        inMemoryDatabasePath,
+        version: 1,
+        onCreate: _onCreate,
+      );
+    }
     final dbPath = await getDatabasesPath();
     final path = join(dbPath, filePath);
 
@@ -89,6 +97,14 @@ class AppDatabase {
         date TEXT NOT NULL
       )
     ''');
+
+    await db.insert('vehicles', {
+      'id': 'default-vehicle-1',
+      'name': 'Default Bike',
+      'mileage': 45.0,
+      'defaultFuelPrice': 100.0,
+      'isDefault': 1,
+    });
   }
 
   static Future<void> resetForTesting() async {
