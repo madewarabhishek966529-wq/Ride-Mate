@@ -1,8 +1,9 @@
 import 'package:sqflite/sqflite.dart';
+import '../database/app_database.dart';
 import '../../domain/models/fuel_refill.dart';
 
 class FuelRefillRepository {
-  final Database _db;
+  final AppDatabaseInterface _db;
 
   FuelRefillRepository(this._db);
 

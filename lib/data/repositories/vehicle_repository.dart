@@ -1,8 +1,9 @@
 import 'package:sqflite/sqflite.dart';
+import '../database/app_database.dart';
 import '../../domain/models/vehicle.dart';
 
 class VehicleRepository {
-  final Database _db;
+  final AppDatabaseInterface _db;
 
   VehicleRepository(this._db);
 

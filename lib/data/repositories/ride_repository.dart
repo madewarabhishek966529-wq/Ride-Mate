@@ -1,8 +1,9 @@
 import 'package:sqflite/sqflite.dart';
+import '../database/app_database.dart';
 import '../../domain/models/ride.dart';
 
 class RideRepository {
-  final Database _db;
+  final AppDatabaseInterface _db;
 
   RideRepository(this._db);
 
@@ -24,7 +25,7 @@ class RideRepository {
   Future<List<Ride>> getRidesByDateRange(DateTime start, DateTime end, {String? vehicleId}) async {
     final startIso = start.toIso8601String();
     final endIso = end.toIso8601String();
-    
+
     if (vehicleId != null && vehicleId.isNotEmpty) {
       final maps = await _db.query(
         'rides',

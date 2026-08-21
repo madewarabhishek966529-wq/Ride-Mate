@@ -1,8 +1,9 @@
 import 'package:sqflite/sqflite.dart';
+import '../database/app_database.dart';
 import '../../domain/models/settlement_record.dart';
 
 class SettlementRepository {
-  final Database _db;
+  final AppDatabaseInterface _db;
 
   SettlementRepository(this._db);
 

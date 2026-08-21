@@ -30,7 +30,7 @@ class RootApp extends StatefulWidget {
 }
 
 class _RootAppState extends State<RootApp> {
-  late Future<Database> _dbFuture;
+  late Future<AppDatabaseInterface> _dbFuture;
 
   @override
   void initState() {
@@ -40,7 +40,7 @@ class _RootAppState extends State<RootApp> {
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<Database>(
+    return FutureBuilder<AppDatabaseInterface>(
       future: _dbFuture,
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {

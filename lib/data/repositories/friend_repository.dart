@@ -1,8 +1,9 @@
 import 'package:sqflite/sqflite.dart';
+import '../database/app_database.dart';
 import '../../domain/models/friend.dart';
 
 class FriendRepository {
-  final Database _db;
+  final AppDatabaseInterface _db;
 
   FriendRepository(this._db);
 

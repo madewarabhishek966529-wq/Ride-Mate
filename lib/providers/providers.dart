@@ -1,5 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:sqflite/sqflite.dart';
+import '../data/database/app_database.dart';
 import '../data/repositories/friend_repository.dart';
 import '../data/repositories/fuel_refill_repository.dart';
 import '../data/repositories/ride_repository.dart';
@@ -18,7 +18,7 @@ import '../services/mileage_analysis_service.dart';
 import '../services/split_calculation_service.dart';
 
 // Database Provider
-final databaseProvider = Provider<Database>((ref) {
+final databaseProvider = Provider<AppDatabaseInterface>((ref) {
   throw UnimplementedError('Database provider must be overridden in main with initialized db');
 });
 

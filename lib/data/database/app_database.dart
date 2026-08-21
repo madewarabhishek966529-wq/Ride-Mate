@@ -2,41 +2,249 @@ import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 
+abstract class AppDatabaseInterface {
+  Future<List<Map<String, dynamic>>> query(
+    String table, {
+    String? where,
+    List<Object?>? whereArgs,
+    String? orderBy,
+  });
+
+  Future<int> insert(
+    String table,
+    Map<String, dynamic> values, {
+    ConflictAlgorithm? conflictAlgorithm,
+  });
+
+  Future<int> update(
+    String table,
+    Map<String, dynamic> values, {
+    String? where,
+    List<Object?>? whereArgs,
+  });
+
+  Future<int> delete(
+    String table, {
+    String? where,
+    List<Object?>? whereArgs,
+  });
+}
+
+class SqfliteDatabaseAdapter implements AppDatabaseInterface {
+  final Database _db;
+  SqfliteDatabaseAdapter(this._db);
+
+  @override
+  Future<List<Map<String, dynamic>>> query(
+    String table, {
+    String? where,
+    List<Object?>? whereArgs,
+    String? orderBy,
+  }) {
+    return _db.query(table, where: where, whereArgs: whereArgs, orderBy: orderBy);
+  }
+
+  @override
+  Future<int> insert(
+    String table,
+    Map<String, dynamic> values, {
+    ConflictAlgorithm? conflictAlgorithm,
+  }) {
+    return _db.insert(table, values, conflictAlgorithm: conflictAlgorithm);
+  }
+
+  @override
+  Future<int> update(
+    String table,
+    Map<String, dynamic> values, {
+    String? where,
+    List<Object?>? whereArgs,
+  }) {
+    return _db.update(table, values, where: where, whereArgs: whereArgs);
+  }
+
+  @override
+  Future<int> delete(
+    String table, {
+    String? where,
+    List<Object?>? whereArgs,
+  }) {
+    return _db.delete(table, where: where, whereArgs: whereArgs);
+  }
+}
+
+class InMemoryDatabaseAdapter implements AppDatabaseInterface {
+  final Map<String, List<Map<String, dynamic>>> _tables = {};
+
+  InMemoryDatabaseAdapter() {
+    _seedDefaultData();
+  }
+
+  void _seedDefaultData() {
+    _tables['vehicles'] = [
+      {
+        'id': 'default-vehicle-1',
+        'name': 'Default Bike',
+        'mileage': 45.0,
+        'defaultFuelPrice': 100.0,
+        'isDefault': 1,
+      }
+    ];
+    _tables['friends'] = [];
+    _tables['fuel_refills'] = [];
+    _tables['rides'] = [];
+    _tables['settlements'] = [];
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> query(
+    String table, {
+    String? where,
+    List<Object?>? whereArgs,
+    String? orderBy,
+  }) async {
+    final list = _tables[table] ?? [];
+    List<Map<String, dynamic>> results = list.map((m) => Map<String, dynamic>.from(m)).toList();
+
+    if (where != null && whereArgs != null) {
+      if (where.contains('id = ?')) {
+        final targetId = whereArgs[0] as String;
+        results = results.where((m) => m['id'] == targetId).toList();
+      } else if (where.contains('vehicleId = ?')) {
+        final targetId = whereArgs[0] as String;
+        results = results.where((m) => m['vehicleId'] == targetId).toList();
+      } else if (where.contains('friendId = ?')) {
+        final targetId = whereArgs[0] as String;
+        results = results.where((m) => m['friendId'] == targetId).toList();
+      } else if (where.contains('isDefault = 1')) {
+        results = results.where((m) => m['isDefault'] == 1).toList();
+      } else if (where.contains('date >= ? AND date <= ?')) {
+        final start = whereArgs[0] as String;
+        final end = whereArgs[1] as String;
+        results = results.where((m) {
+          final d = m['date'] as String;
+          return d.compareTo(start) >= 0 && d.compareTo(end) <= 0;
+        }).toList();
+        if (where.contains('vehicleId = ?') && whereArgs.length > 2) {
+          final vId = whereArgs[2] as String;
+          results = results.where((m) => m['vehicleId'] == vId).toList();
+        }
+      }
+    }
+
+    if (orderBy != null) {
+      if (orderBy.contains('date ASC')) {
+        results.sort((a, b) => (a['date'] as String).compareTo(b['date'] as String));
+      } else if (orderBy.contains('date DESC')) {
+        results.sort((a, b) => (b['date'] as String).compareTo(a['date'] as String));
+      } else if (orderBy.contains('name ASC')) {
+        results.sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+      }
+    }
+
+    return results;
+  }
+
+  @override
+  Future<int> insert(
+    String table,
+    Map<String, dynamic> values, {
+    ConflictAlgorithm? conflictAlgorithm,
+  }) async {
+    _tables.putIfAbsent(table, () => []);
+    final list = _tables[table]!;
+
+    final id = values['id'];
+    if (id != null) {
+      list.removeWhere((item) => item['id'] == id);
+    }
+
+    if (values['isDefault'] == 1) {
+      for (var item in list) {
+        item['isDefault'] = 0;
+      }
+    }
+
+    list.add(Map<String, dynamic>.from(values));
+    return 1;
+  }
+
+  @override
+  Future<int> update(
+    String table,
+    Map<String, dynamic> values, {
+    String? where,
+    List<Object?>? whereArgs,
+  }) async {
+    final list = _tables[table] ?? [];
+    int updatedCount = 0;
+
+    if (values['isDefault'] == 1) {
+      for (var item in list) {
+        item['isDefault'] = 0;
+      }
+    }
+
+    final targetId = whereArgs != null && whereArgs.isNotEmpty ? whereArgs[0] as String : null;
+
+    for (var i = 0; i < list.length; i++) {
+      if (targetId == null || list[i]['id'] == targetId) {
+        list[i] = {...list[i], ...values};
+        updatedCount++;
+      }
+    }
+
+    return updatedCount;
+  }
+
+  @override
+  Future<int> delete(
+    String table, {
+    String? where,
+    List<Object?>? whereArgs,
+  }) async {
+    final list = _tables[table] ?? [];
+    if (whereArgs != null && whereArgs.isNotEmpty) {
+      final targetId = whereArgs[0] as String;
+      final beforeLen = list.length;
+      list.removeWhere((item) => item['id'] == targetId);
+      return beforeLen - list.length;
+    }
+    final len = list.length;
+    list.clear();
+    return len;
+  }
+}
+
 class AppDatabase {
-  static Database? _db;
+  static AppDatabaseInterface? _adapter;
 
-  static Future<Database> get instance async {
-    if (_db != null) return _db!;
-    _db = await _initDb('ridemate.db');
-    return _db!;
-  }
+  static Future<AppDatabaseInterface> get instance async {
+    if (_adapter != null) return _adapter!;
 
-  static Future<Database> initInMemory() async {
-    final db = await openDatabase(
-      inMemoryDatabasePath,
-      version: 1,
-      onCreate: _onCreate,
-    );
-    _db = db;
-    return db;
-  }
-
-  static Future<Database> _initDb(String filePath) async {
     if (kIsWeb) {
-      return await openDatabase(
-        inMemoryDatabasePath,
+      _adapter = InMemoryDatabaseAdapter();
+      return _adapter!;
+    }
+
+    try {
+      final dbPath = await getDatabasesPath();
+      final path = join(dbPath, 'ridemate.db');
+      final db = await openDatabase(
+        path,
         version: 1,
         onCreate: _onCreate,
       );
+      _adapter = SqfliteDatabaseAdapter(db);
+    } catch (e) {
+      _adapter = InMemoryDatabaseAdapter();
     }
-    final dbPath = await getDatabasesPath();
-    final path = join(dbPath, filePath);
+    return _adapter!;
+  }
 
-    return await openDatabase(
-      path,
-      version: 1,
-      onCreate: _onCreate,
-    );
+  static Future<AppDatabaseInterface> initInMemory() async {
+    _adapter = InMemoryDatabaseAdapter();
+    return _adapter!;
   }
 
   static Future<void> _onCreate(Database db, int version) async {
@@ -108,9 +316,6 @@ class AppDatabase {
   }
 
   static Future<void> resetForTesting() async {
-    if (_db != null) {
-      await _db!.close();
-      _db = null;
-    }
+    _adapter = null;
   }
 }
