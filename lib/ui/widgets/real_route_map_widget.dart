@@ -10,11 +10,10 @@ class RealRouteMapWidget extends StatefulWidget {
   final double currentDistanceKm;
   final bool isLiveTracking;
   final bool isManualMapMode;
-  final LatLng? manualStartPoint;
-  final LatLng? manualEndPoint;
+  final List<LatLng>? manualWaypoints;
   final List<LatLng>? manualRoadPolyline;
-  final Function(LatLng start, LatLng end, double calculatedRoadDistanceKm, List<LatLng> roadPolyline)?
-      onManualPointsSelected;
+  final Function(List<LatLng> waypoints, double calculatedRoadDistanceKm, List<LatLng> roadPolyline)?
+      onManualWaypointsSelected;
   final Function(String placeName, LatLng location)? onPlaceSearched;
   final LatLng? userCurrentLocation;
   final Future<void> Function()? onRequestLocation;
@@ -25,10 +24,9 @@ class RealRouteMapWidget extends StatefulWidget {
     required this.currentDistanceKm,
     this.isLiveTracking = false,
     this.isManualMapMode = false,
-    this.manualStartPoint,
-    this.manualEndPoint,
+    this.manualWaypoints,
     this.manualRoadPolyline,
-    this.onManualPointsSelected,
+    this.onManualWaypointsSelected,
     this.onPlaceSearched,
     this.userCurrentLocation,
     this.onRequestLocation,
@@ -40,13 +38,11 @@ class RealRouteMapWidget extends StatefulWidget {
 
 class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
   late final MapController _mapController;
-  LatLng? _manualStart;
-  LatLng? _manualEnd;
+  List<LatLng> _manualWaypoints = [];
   List<LatLng> _manualRoadPolyline = [];
   bool _isLocating = false;
   bool _isRouting = false;
 
-  // Location search state
   final _searchController = TextEditingController();
   final _searchService = LocationSearchService();
   List<LocationSearchResult> _searchResults = [];
@@ -59,8 +55,7 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
   void initState() {
     super.initState();
     _mapController = MapController();
-    _manualStart = widget.manualStartPoint;
-    _manualEnd = widget.manualEndPoint;
+    _manualWaypoints = List.from(widget.manualWaypoints ?? []);
     _manualRoadPolyline = widget.manualRoadPolyline ?? [];
   }
 
@@ -74,8 +69,9 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
   @override
   void didUpdateWidget(covariant RealRouteMapWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    _manualStart = widget.manualStartPoint;
-    _manualEnd = widget.manualEndPoint;
+    if (widget.manualWaypoints != null) {
+      _manualWaypoints = List.from(widget.manualWaypoints!);
+    }
     if (widget.manualRoadPolyline != null) {
       _manualRoadPolyline = widget.manualRoadPolyline!;
     }
@@ -117,79 +113,85 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
     widget.onPlaceSearched?.call(result.displayName, result.location);
 
     if (widget.isManualMapMode) {
-      if (_manualStart == null || (_manualStart != null && _manualEnd != null)) {
-        setState(() {
-          _manualStart = result.location;
-          _manualEnd = null;
-          _manualRoadPolyline.clear();
-        });
-      } else {
-        setState(() {
-          _manualEnd = result.location;
-          _isRouting = true;
-        });
+      await _addWaypoint(result.location);
+    }
+  }
 
+  Future<void> _addWaypoint(LatLng point) async {
+    setState(() {
+      _manualWaypoints.add(point);
+    });
+
+    if (_manualWaypoints.length >= 2) {
+      setState(() => _isRouting = true);
+      final routingService = RoadRoutingService();
+      final routeResult = await routingService.getMultiStopRoadRoute(_manualWaypoints);
+
+      if (mounted) {
+        setState(() {
+          _manualRoadPolyline = routeResult.polylinePoints;
+          _isRouting = false;
+        });
+        widget.onManualWaypointsSelected?.call(
+          _manualWaypoints,
+          routeResult.distanceKm,
+          routeResult.polylinePoints,
+        );
+      }
+    } else {
+      widget.onManualWaypointsSelected?.call(_manualWaypoints, 0.0, []);
+    }
+  }
+
+  Future<void> _removeLastWaypoint() async {
+    if (_manualWaypoints.isNotEmpty) {
+      setState(() {
+        _manualWaypoints.removeLast();
+      });
+      if (_manualWaypoints.length >= 2) {
+        setState(() => _isRouting = true);
         final routingService = RoadRoutingService();
-        final routeResult = await routingService.getRoadRoute(_manualStart!, _manualEnd!);
+        final routeResult = await routingService.getMultiStopRoadRoute(_manualWaypoints);
 
         if (mounted) {
           setState(() {
             _manualRoadPolyline = routeResult.polylinePoints;
             _isRouting = false;
           });
-          widget.onManualPointsSelected?.call(
-            _manualStart!,
-            _manualEnd!,
+          widget.onManualWaypointsSelected?.call(
+            _manualWaypoints,
             routeResult.distanceKm,
             routeResult.polylinePoints,
           );
         }
+      } else {
+        setState(() => _manualRoadPolyline.clear());
+        widget.onManualWaypointsSelected?.call(_manualWaypoints, 0.0, []);
       }
     }
   }
 
+  Future<void> _clearAllWaypoints() async {
+    setState(() {
+      _manualWaypoints.clear();
+      _manualRoadPolyline.clear();
+    });
+    widget.onManualWaypointsSelected?.call([], 0.0, []);
+  }
+
   Future<void> _onMapTap(TapPosition tapPosition, LatLng point) async {
-    // Dismiss search results if open
     if (_searchResults.isNotEmpty) {
       setState(() => _searchResults = []);
     }
 
     if (!widget.isManualMapMode) return;
-
-    if (_manualStart == null || (_manualStart != null && _manualEnd != null)) {
-      setState(() {
-        _manualStart = point;
-        _manualEnd = null;
-        _manualRoadPolyline.clear();
-      });
-    } else {
-      setState(() {
-        _manualEnd = point;
-        _isRouting = true;
-      });
-
-      final routingService = RoadRoutingService();
-      final result = await routingService.getRoadRoute(_manualStart!, _manualEnd!);
-
-      if (mounted) {
-        setState(() {
-          _manualRoadPolyline = result.polylinePoints;
-          _isRouting = false;
-        });
-        widget.onManualPointsSelected?.call(
-          _manualStart!,
-          _manualEnd!,
-          result.distanceKm,
-          result.polylinePoints,
-        );
-      }
-    }
+    await _addWaypoint(point);
   }
 
   LatLng _getCenterLocation() {
     if (widget.userCurrentLocation != null) return widget.userCurrentLocation!;
     if (widget.routePoints.isNotEmpty) return widget.routePoints.last;
-    if (_manualStart != null) return _manualStart!;
+    if (_manualWaypoints.isNotEmpty) return _manualWaypoints.last;
     return _defaultCenter;
   }
 
@@ -217,19 +219,17 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
           currentDistanceKm: widget.currentDistanceKm,
           isLiveTracking: widget.isLiveTracking,
           isManualMapMode: widget.isManualMapMode,
-          manualStartPoint: _manualStart,
-          manualEndPoint: _manualEnd,
+          manualWaypoints: _manualWaypoints,
           manualRoadPolyline: _manualRoadPolyline,
           userCurrentLocation: widget.userCurrentLocation,
           onRequestLocation: widget.onRequestLocation,
           onPlaceSearched: widget.onPlaceSearched,
-          onManualPointsSelected: (start, end, roadDistKm, polyline) {
+          onManualWaypointsSelected: (waypoints, roadDistKm, polyline) {
             setState(() {
-              _manualStart = start;
-              _manualEnd = end;
+              _manualWaypoints = List.from(waypoints);
               _manualRoadPolyline = polyline;
             });
-            widget.onManualPointsSelected?.call(start, end, roadDistKm, polyline);
+            widget.onManualWaypointsSelected?.call(waypoints, roadDistKm, polyline);
           },
         ),
       ),
@@ -243,6 +243,7 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
 
     final List<Marker> markers = [];
 
+    // Current User Location Marker
     if (widget.userCurrentLocation != null) {
       markers.add(
         Marker(
@@ -277,23 +278,30 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
     }
 
     if (widget.isManualMapMode) {
-      if (_manualStart != null) {
+      for (int i = 0; i < _manualWaypoints.length; i++) {
+        final pt = _manualWaypoints[i];
+        final isStart = i == 0;
+        final isEnd = i == _manualWaypoints.length - 1 && _manualWaypoints.length > 1;
+
         markers.add(
           Marker(
-            point: _manualStart!,
-            width: 40,
-            height: 40,
-            child: const Icon(Icons.location_on, color: Colors.green, size: 38),
-          ),
-        );
-      }
-      if (_manualEnd != null) {
-        markers.add(
-          Marker(
-            point: _manualEnd!,
-            width: 40,
-            height: 40,
-            child: const Icon(Icons.flag, color: Colors.redAccent, size: 36),
+            point: pt,
+            width: 36,
+            height: 36,
+            child: Container(
+              decoration: BoxDecoration(
+                color: isStart ? Colors.green : (isEnd ? Colors.redAccent : Colors.orange.shade800),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+                boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 4)],
+              ),
+              child: Center(
+                child: Text(
+                  '${i + 1}',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                ),
+              ),
+            ),
           ),
         );
       }
@@ -326,10 +334,8 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
     }
 
     final List<Polyline> polylines = [];
-    if (widget.isManualMapMode && _manualStart != null && _manualEnd != null) {
-      final polylinePoints = _manualRoadPolyline.isNotEmpty
-          ? _manualRoadPolyline
-          : [_manualStart!, _manualEnd!];
+    if (widget.isManualMapMode && _manualWaypoints.length >= 2) {
+      final polylinePoints = _manualRoadPolyline.isNotEmpty ? _manualRoadPolyline : _manualWaypoints;
 
       polylines.add(
         Polyline(
@@ -352,188 +358,223 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
       );
     }
 
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: SizedBox(
-        height: 320,
-        child: Stack(
-          children: [
-            // OpenStreetMap Interactive Canvas
-            FlutterMap(
-              mapController: _mapController,
-              options: MapOptions(
-                initialCenter: center,
-                initialZoom: 15.0,
-                onTap: _onMapTap,
-              ),
+    return Column(
+      children: [
+        Card(
+          clipBehavior: Clip.antiAlias,
+          elevation: 4,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          child: SizedBox(
+            height: 320,
+            child: Stack(
               children: [
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.ridemate.app',
-                  maxZoom: 19,
-                ),
-                if (polylines.isNotEmpty) PolylineLayer(polylines: polylines),
-                if (markers.isNotEmpty) MarkerLayer(markers: markers),
-              ],
-            ),
-
-            // Location Search Bar Overlay
-            Positioned(
-              top: 10,
-              left: 10,
-              right: 52,
-              child: Column(
-                children: [
-                  Container(
-                    height: 40,
-                    decoration: BoxDecoration(
-                      color: isDark ? Colors.grey.shade900 : Colors.white,
-                      borderRadius: BorderRadius.circular(20),
-                      boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6)],
-                    ),
-                    child: TextField(
-                      controller: _searchController,
-                      style: TextStyle(fontSize: 13, color: isDark ? Colors.white : Colors.black87),
-                      onChanged: _onSearchQueryChanged,
-                      decoration: InputDecoration(
-                        hintText: 'Search city, street or location...',
-                        hintStyle: const TextStyle(fontSize: 12, color: Colors.grey),
-                        prefixIcon: const Icon(Icons.search, size: 18),
-                        suffixIcon: _isSearching
-                            ? const Padding(
-                                padding: EdgeInsets.all(10.0),
-                                child: SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2)),
-                              )
-                            : (_searchController.text.isNotEmpty
-                                ? IconButton(
-                                    icon: const Icon(Icons.clear, size: 16),
-                                    onPressed: () {
-                                      _searchController.clear();
-                                      setState(() => _searchResults = []);
-                                    },
-                                  )
-                                : null),
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(vertical: 10),
-                      ),
-                    ),
+                FlutterMap(
+                  mapController: _mapController,
+                  options: MapOptions(
+                    initialCenter: center,
+                    initialZoom: 15.0,
+                    onTap: _onMapTap,
                   ),
-                  if (_searchResults.isNotEmpty)
-                    Container(
-                      margin: const EdgeInsets.only(top: 4),
-                      constraints: const BoxConstraints(maxHeight: 150),
-                      decoration: BoxDecoration(
-                        color: isDark ? Colors.grey.shade900 : Colors.white,
-                        borderRadius: BorderRadius.circular(12),
-                        boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 6)],
-                      ),
-                      child: ListView.separated(
-                        shrinkWrap: true,
-                        itemCount: _searchResults.length,
-                        separatorBuilder: (ctx, idx) => const Divider(height: 1),
-
-                        itemBuilder: (context, index) {
-                          final item = _searchResults[index];
-                          return ListTile(
-                            dense: true,
-                            visualDensity: VisualDensity.compact,
-                            leading: const Icon(Icons.location_on, size: 16, color: Colors.redAccent),
-                            title: Text(
-                              item.displayName,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                            onTap: () => _selectSearchedLocation(item),
-                          );
-                        },
-                      ),
-                    ),
-                ],
-              ),
-            ),
-
-            // Full Screen Mode Button
-            Positioned(
-              top: 10,
-              right: 10,
-              child: InkWell(
-                onTap: () => _openFullScreenMap(context),
-                child: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: isDark ? Colors.black87 : Colors.white,
-                    shape: BoxShape.circle,
-                    boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
-                  ),
-                  child: Icon(
-                    Icons.fullscreen,
-                    size: 20,
-                    color: Colors.blue.shade800,
-                  ),
-                ),
-              ),
-            ),
-
-            // Distance HUD Badge
-            Positioned(
-              bottom: 12,
-              right: 12,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.blue.shade900,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 4)],
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (_isRouting) ...[
-                      const SizedBox(
-                        width: 12,
-                        height: 12,
-                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                      ),
-                      const SizedBox(width: 8),
-                    ],
-                    Text(
-                      '${widget.currentDistanceKm.toStringAsFixed(2)} km',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15,
-                      ),
+                    TileLayer(
+                      urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                      userAgentPackageName: 'com.ridemate.app',
+                      maxZoom: 19,
                     ),
+                    if (polylines.isNotEmpty) PolylineLayer(polylines: polylines),
+                    if (markers.isNotEmpty) MarkerLayer(markers: markers),
                   ],
                 ),
 
-              ),
-            ),
+                // Location Search Bar Overlay
+                Positioned(
+                  top: 10,
+                  left: 10,
+                  right: 52,
+                  child: Column(
+                    children: [
+                      Container(
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: isDark ? Colors.grey.shade900 : Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6)],
+                        ),
+                        child: TextField(
+                          controller: _searchController,
+                          style: TextStyle(fontSize: 13, color: isDark ? Colors.white : Colors.black87),
+                          onChanged: _onSearchQueryChanged,
+                          decoration: InputDecoration(
+                            hintText: widget.isManualMapMode
+                                ? 'Search & add stop / waypoint...'
+                                : 'Search location...',
+                            hintStyle: const TextStyle(fontSize: 12, color: Colors.grey),
+                            prefixIcon: const Icon(Icons.search, size: 18),
+                            suffixIcon: _isSearching
+                                ? const Padding(
+                                    padding: EdgeInsets.all(10.0),
+                                    child: SizedBox(
+                                        width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2)),
+                                  )
+                                : (_searchController.text.isNotEmpty
+                                    ? IconButton(
+                                        icon: const Icon(Icons.clear, size: 16),
+                                        onPressed: () {
+                                          _searchController.clear();
+                                          setState(() => _searchResults = []);
+                                        },
+                                      )
+                                    : null),
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                          ),
+                        ),
+                      ),
+                      if (_searchResults.isNotEmpty)
+                        Container(
+                          margin: const EdgeInsets.only(top: 4),
+                          constraints: const BoxConstraints(maxHeight: 150),
+                          decoration: BoxDecoration(
+                            color: isDark ? Colors.grey.shade900 : Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 6)],
+                          ),
+                          child: ListView.separated(
+                            shrinkWrap: true,
+                            itemCount: _searchResults.length,
+                            separatorBuilder: (ctx, idx) => const Divider(height: 1),
+                            itemBuilder: (context, index) {
+                              final item = _searchResults[index];
+                              return ListTile(
+                                dense: true,
+                                visualDensity: VisualDensity.compact,
+                                leading: const Icon(Icons.location_on, size: 16, color: Colors.redAccent),
+                                title: Text(
+                                  item.displayName,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 12),
+                                ),
+                                onTap: () => _selectSearchedLocation(item),
+                              );
+                            },
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
 
-            // Recenter Map FAB
-            Positioned(
-              bottom: 12,
-              left: 12,
-              child: FloatingActionButton.small(
-                heroTag: 'recenter_map_btn',
-                backgroundColor: isDark ? Colors.grey.shade800 : Colors.white,
-                foregroundColor: Colors.blue,
-                onPressed: _handleRecenter,
-                child: _isLocating
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2.5),
-                      )
-                    : const Icon(Icons.my_location),
-              ),
+                // Full Screen Mode Button
+                Positioned(
+                  top: 10,
+                  right: 10,
+                  child: InkWell(
+                    onTap: () => _openFullScreenMap(context),
+                    child: Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: isDark ? Colors.black87 : Colors.white,
+                        shape: BoxShape.circle,
+                        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                      ),
+                      child: Icon(
+                        Icons.fullscreen,
+                        size: 20,
+                        color: Colors.blue.shade800,
+                      ),
+                    ),
+                  ),
+                ),
+
+                // Distance HUD Badge
+                Positioned(
+                  bottom: 12,
+                  right: 12,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade900,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 4)],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (_isRouting) ...[
+                          const SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
+                        Text(
+                          '${widget.currentDistanceKm.toStringAsFixed(2)} km',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+
+                // Recenter Map FAB
+                Positioned(
+                  bottom: 12,
+                  left: 12,
+                  child: FloatingActionButton.small(
+                    heroTag: 'recenter_map_btn',
+                    backgroundColor: isDark ? Colors.grey.shade800 : Colors.white,
+                    foregroundColor: Colors.blue,
+                    onPressed: _handleRecenter,
+                    child: _isLocating
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2.5),
+                          )
+                        : const Icon(Icons.my_location),
+                  ),
+                ),
+              ],
             ),
-          ],
+          ),
         ),
-      ),
+
+        // Multi-Stop Waypoint Bar in Manual Mode
+        if (widget.isManualMapMode) ...[
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _manualWaypoints.isEmpty
+                      ? 'Tap map or search to add stops'
+                      : '${_manualWaypoints.length} Stop${_manualWaypoints.length > 1 ? "s" : ""} added',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+              ),
+              if (_manualWaypoints.isNotEmpty) ...[
+                TextButton.icon(
+                  onPressed: _removeLastWaypoint,
+                  icon: const Icon(Icons.undo, size: 14),
+                  label: const Text('Undo Stop', style: TextStyle(fontSize: 11)),
+                  style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                ),
+                TextButton.icon(
+                  onPressed: _clearAllWaypoints,
+                  icon: const Icon(Icons.clear_all, size: 14, color: Colors.red),
+                  label: const Text('Clear All', style: TextStyle(fontSize: 11, color: Colors.red)),
+                  style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ],
     );
   }
 }
@@ -543,11 +584,10 @@ class FullScreenMapScreen extends StatefulWidget {
   final double currentDistanceKm;
   final bool isLiveTracking;
   final bool isManualMapMode;
-  final LatLng? manualStartPoint;
-  final LatLng? manualEndPoint;
+  final List<LatLng>? manualWaypoints;
   final List<LatLng>? manualRoadPolyline;
-  final Function(LatLng start, LatLng end, double calculatedRoadDistanceKm, List<LatLng> roadPolyline)?
-      onManualPointsSelected;
+  final Function(List<LatLng> waypoints, double calculatedRoadDistanceKm, List<LatLng> roadPolyline)?
+      onManualWaypointsSelected;
   final Function(String placeName, LatLng location)? onPlaceSearched;
   final LatLng? userCurrentLocation;
   final Future<void> Function()? onRequestLocation;
@@ -558,10 +598,9 @@ class FullScreenMapScreen extends StatefulWidget {
     required this.currentDistanceKm,
     required this.isLiveTracking,
     required this.isManualMapMode,
-    this.manualStartPoint,
-    this.manualEndPoint,
+    this.manualWaypoints,
     this.manualRoadPolyline,
-    this.onManualPointsSelected,
+    this.onManualWaypointsSelected,
     this.onPlaceSearched,
     this.userCurrentLocation,
     this.onRequestLocation,
@@ -573,8 +612,7 @@ class FullScreenMapScreen extends StatefulWidget {
 
 class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
   late final MapController _mapController;
-  LatLng? _manualStart;
-  LatLng? _manualEnd;
+  List<LatLng> _manualWaypoints = [];
   List<LatLng> _manualRoadPolyline = [];
   double _distanceKm = 0.0;
   bool _isLocating = false;
@@ -592,8 +630,7 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
   void initState() {
     super.initState();
     _mapController = MapController();
-    _manualStart = widget.manualStartPoint;
-    _manualEnd = widget.manualEndPoint;
+    _manualWaypoints = List.from(widget.manualWaypoints ?? []);
     _manualRoadPolyline = widget.manualRoadPolyline ?? [];
     _distanceKm = widget.currentDistanceKm;
   }
@@ -637,20 +674,46 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
     widget.onPlaceSearched?.call(result.displayName, result.location);
 
     if (widget.isManualMapMode) {
-      if (_manualStart == null || (_manualStart != null && _manualEnd != null)) {
-        setState(() {
-          _manualStart = result.location;
-          _manualEnd = null;
-          _manualRoadPolyline.clear();
-        });
-      } else {
-        setState(() {
-          _manualEnd = result.location;
-          _isRouting = true;
-        });
+      await _addWaypoint(result.location);
+    }
+  }
 
+  Future<void> _addWaypoint(LatLng point) async {
+    setState(() {
+      _manualWaypoints.add(point);
+    });
+
+    if (_manualWaypoints.length >= 2) {
+      setState(() => _isRouting = true);
+      final routingService = RoadRoutingService();
+      final routeResult = await routingService.getMultiStopRoadRoute(_manualWaypoints);
+
+      if (mounted) {
+        setState(() {
+          _manualRoadPolyline = routeResult.polylinePoints;
+          _distanceKm = routeResult.distanceKm;
+          _isRouting = false;
+        });
+        widget.onManualWaypointsSelected?.call(
+          _manualWaypoints,
+          routeResult.distanceKm,
+          routeResult.polylinePoints,
+        );
+      }
+    } else {
+      widget.onManualWaypointsSelected?.call(_manualWaypoints, 0.0, []);
+    }
+  }
+
+  Future<void> _removeLastWaypoint() async {
+    if (_manualWaypoints.isNotEmpty) {
+      setState(() {
+        _manualWaypoints.removeLast();
+      });
+      if (_manualWaypoints.length >= 2) {
+        setState(() => _isRouting = true);
         final routingService = RoadRoutingService();
-        final routeResult = await routingService.getRoadRoute(_manualStart!, _manualEnd!);
+        final routeResult = await routingService.getMultiStopRoadRoute(_manualWaypoints);
 
         if (mounted) {
           setState(() {
@@ -658,15 +721,29 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
             _distanceKm = routeResult.distanceKm;
             _isRouting = false;
           });
-          widget.onManualPointsSelected?.call(
-            _manualStart!,
-            _manualEnd!,
+          widget.onManualWaypointsSelected?.call(
+            _manualWaypoints,
             routeResult.distanceKm,
             routeResult.polylinePoints,
           );
         }
+      } else {
+        setState(() {
+          _manualRoadPolyline.clear();
+          _distanceKm = 0.0;
+        });
+        widget.onManualWaypointsSelected?.call(_manualWaypoints, 0.0, []);
       }
     }
+  }
+
+  Future<void> _clearAllWaypoints() async {
+    setState(() {
+      _manualWaypoints.clear();
+      _manualRoadPolyline.clear();
+      _distanceKm = 0.0;
+    });
+    widget.onManualWaypointsSelected?.call([], 0.0, []);
   }
 
   Future<void> _onMapTap(TapPosition tapPosition, LatLng point) async {
@@ -675,42 +752,13 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
     }
 
     if (!widget.isManualMapMode) return;
-
-    if (_manualStart == null || (_manualStart != null && _manualEnd != null)) {
-      setState(() {
-        _manualStart = point;
-        _manualEnd = null;
-        _manualRoadPolyline.clear();
-      });
-    } else {
-      setState(() {
-        _manualEnd = point;
-        _isRouting = true;
-      });
-
-      final routingService = RoadRoutingService();
-      final result = await routingService.getRoadRoute(_manualStart!, _manualEnd!);
-
-      if (mounted) {
-        setState(() {
-          _manualRoadPolyline = result.polylinePoints;
-          _distanceKm = result.distanceKm;
-          _isRouting = false;
-        });
-        widget.onManualPointsSelected?.call(
-          _manualStart!,
-          _manualEnd!,
-          result.distanceKm,
-          result.polylinePoints,
-        );
-      }
-    }
+    await _addWaypoint(point);
   }
 
   LatLng _getCenterLocation() {
     if (widget.userCurrentLocation != null) return widget.userCurrentLocation!;
     if (widget.routePoints.isNotEmpty) return widget.routePoints.last;
-    if (_manualStart != null) return _manualStart!;
+    if (_manualWaypoints.isNotEmpty) return _manualWaypoints.last;
     return _defaultCenter;
   }
 
@@ -771,23 +819,30 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
     }
 
     if (widget.isManualMapMode) {
-      if (_manualStart != null) {
+      for (int i = 0; i < _manualWaypoints.length; i++) {
+        final pt = _manualWaypoints[i];
+        final isStart = i == 0;
+        final isEnd = i == _manualWaypoints.length - 1 && _manualWaypoints.length > 1;
+
         markers.add(
           Marker(
-            point: _manualStart!,
-            width: 44,
-            height: 44,
-            child: const Icon(Icons.location_on, color: Colors.green, size: 42),
-          ),
-        );
-      }
-      if (_manualEnd != null) {
-        markers.add(
-          Marker(
-            point: _manualEnd!,
-            width: 44,
-            height: 44,
-            child: const Icon(Icons.flag, color: Colors.redAccent, size: 40),
+            point: pt,
+            width: 40,
+            height: 40,
+            child: Container(
+              decoration: BoxDecoration(
+                color: isStart ? Colors.green : (isEnd ? Colors.redAccent : Colors.orange.shade800),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+                boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 4)],
+              ),
+              child: Center(
+                child: Text(
+                  '${i + 1}',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                ),
+              ),
+            ),
           ),
         );
       }
@@ -820,10 +875,8 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
     }
 
     final List<Polyline> polylines = [];
-    if (widget.isManualMapMode && _manualStart != null && _manualEnd != null) {
-      final polylinePoints = _manualRoadPolyline.isNotEmpty
-          ? _manualRoadPolyline
-          : [_manualStart!, _manualEnd!];
+    if (widget.isManualMapMode && _manualWaypoints.length >= 2) {
+      final polylinePoints = _manualRoadPolyline.isNotEmpty ? _manualRoadPolyline : _manualWaypoints;
 
       polylines.add(
         Polyline(
@@ -851,9 +904,21 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
         title: Text(
           widget.isLiveTracking
               ? 'Full Screen Live GPS Map'
-              : (widget.isManualMapMode ? 'Full Screen Road Route Picker' : 'Full Screen Map'),
+              : (widget.isManualMapMode ? 'Multi-Stop Road Route Picker' : 'Full Screen Map'),
         ),
         actions: [
+          if (widget.isManualMapMode && _manualWaypoints.isNotEmpty) ...[
+            IconButton(
+              icon: const Icon(Icons.undo),
+              tooltip: 'Undo Last Stop',
+              onPressed: _removeLastWaypoint,
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete_sweep),
+              tooltip: 'Clear All Stops',
+              onPressed: _clearAllWaypoints,
+            ),
+          ],
           IconButton(
             icon: const Icon(Icons.check),
             tooltip: 'Done',
@@ -900,7 +965,7 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
                     style: TextStyle(fontSize: 14, color: isDark ? Colors.white : Colors.black87),
                     onChanged: _onSearchQueryChanged,
                     decoration: InputDecoration(
-                      hintText: 'Search city, street or location name...',
+                      hintText: 'Search city, street or stop name...',
                       hintStyle: const TextStyle(fontSize: 13, color: Colors.grey),
                       prefixIcon: const Icon(Icons.search, size: 20),
                       suffixIcon: _isSearching
@@ -935,7 +1000,6 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
                       shrinkWrap: true,
                       itemCount: _searchResults.length,
                       separatorBuilder: (ctx, idx) => const Divider(height: 1),
-
                       itemBuilder: (context, index) {
                         final item = _searchResults[index];
                         return ListTile(
@@ -988,7 +1052,6 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
                   ),
                 ],
               ),
-
             ),
           ),
 

@@ -13,7 +13,6 @@ import '../../services/road_routing_service.dart';
 import '../widgets/gradient_button.dart';
 import '../widgets/real_route_map_widget.dart';
 
-
 class RideTrackingScreen extends ConsumerStatefulWidget {
   const RideTrackingScreen({super.key});
 
@@ -30,6 +29,7 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
 
   String? _selectedVehicleId;
   String _trackingMode = 'GPS'; // 'GPS' or 'Manual'
+  bool _isRoundTrip = false; // One-Way vs Round-Trip (Return)
   String _paidBy = 'ME'; // 'ME' or friendId
   final Set<String> _selectedParticipantIds = {'ME'}; // 'ME' + friend IDs
 
@@ -46,10 +46,10 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
   bool _locationServiceEnabled = true;
   LocationPermission _locationPermission = LocationPermission.denied;
 
-  // Manual Map selection state
-  LatLng? _manualStartPoint;
-  LatLng? _manualEndPoint;
+  // Manual Map selection state (Multi-Stop Waypoints)
+  List<LatLng> _manualWaypoints = [];
   List<LatLng> _manualRoadPolyline = [];
+  double _rawOneWayDistanceKm = 0.0;
 
   @override
   void initState() {
@@ -229,7 +229,7 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
 
     showDialog(
       context: context,
-      builder: (context) {
+      builder: (dialogContext) {
         return StatefulBuilder(
           builder: (dialogContext, setDialogState) {
             return AlertDialog(
@@ -404,7 +404,16 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
   }
 
   Future<void> _saveRide(List<Vehicle> vehicles, List<Friend> friends) async {
-    if (!_formKey.currentState!.validate()) return;
+    // 1. Validate Form Fields (Ride Name, Mileage, Petrol Price)
+    if (!_formKey.currentState!.validate()) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Please fill out all required fields marked in red.'),
+          backgroundColor: Colors.orange.shade800,
+        ),
+      );
+      return;
+    }
 
     final mileage = double.tryParse(_mileageController.text.trim()) ?? 45.0;
     final fuelPrice = double.tryParse(_fuelPriceController.text.trim()) ?? 100.0;
@@ -419,53 +428,100 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
       ),
     );
 
-    final distanceKm = _trackingMode == 'GPS'
-        ? _gpsDistanceKm
-        : (double.tryParse(_manualDistanceController.text.trim()) ?? 0.0);
+    // 2. Resolve Effective Distance across GPS or Manual Map / Text Entry
+    double rawKm = 0.0;
+    if (_trackingMode == 'GPS' && _gpsDistanceKm > 0) {
+      rawKm = _gpsDistanceKm;
+    } else {
+      rawKm = double.tryParse(_manualDistanceController.text.trim()) ?? 0.0;
+      if (rawKm <= 0 && _gpsDistanceKm > 0) {
+        rawKm = _gpsDistanceKm;
+      }
+    }
 
-    if (distanceKm <= 0) {
+    // Multiply by 2 if Round-Trip / Return Trip selected
+    final totalDistanceKm = _isRoundTrip ? (rawKm * 2) : rawKm;
+
+    if (totalDistanceKm <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Distance must be greater than 0 km. Please track movement or select distance on map.'),
+        SnackBar(
+          content: const Text('Distance is 0.0 km. Please tap points on the map, enter distance, or start Live GPS tracking.'),
+          backgroundColor: Colors.orange.shade900,
+          duration: const Duration(seconds: 4),
+          action: SnackBarAction(
+            label: 'MANUAL MAP',
+            textColor: Colors.white,
+            onPressed: () {
+              setState(() => _trackingMode = 'Manual');
+            },
+          ),
         ),
       );
       return;
     }
 
-    final fuelCalc = ref.read(fuelCalculationServiceProvider);
-    final splitCalc = ref.read(splitCalculationServiceProvider);
-
-    final fuelUsed = fuelCalc.calculateFuelUsed(distanceKm, mileage);
-    final fuelCost = fuelCalc.calculateFuelCost(fuelUsed, fuelPrice);
-
-    final participantList = _selectedParticipantIds.toList();
-    final shares = splitCalc.calculateEvenShares(fuelCost, participantList);
-
-    final newRide = Ride(
-      id: const Uuid().v4(),
-      name: _nameController.text.trim(),
-      date: DateTime.now(),
-      vehicleId: selectedBike.id,
-      vehicleName: selectedBike.name,
-      mileage: mileage,
-      fuelPrice: fuelPrice,
-      distanceKm: distanceKm,
-      fuelUsedLiters: fuelUsed,
-      totalFuelCost: fuelCost,
-      trackingMode: _trackingMode,
-      paidBy: _paidBy,
-      participantIds: participantList,
-      participantShares: shares,
-    );
-
-    await ref.read(rideListProvider.notifier).addRide(newRide);
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Ride saved successfully!')),
-      );
-      Navigator.of(context).pop();
+    // 3. Ensure Participants Selected
+    if (_selectedParticipantIds.isEmpty) {
+      _selectedParticipantIds.add('ME');
     }
+
+    try {
+      final fuelCalc = ref.read(fuelCalculationServiceProvider);
+      final splitCalc = ref.read(splitCalculationServiceProvider);
+
+      final fuelUsed = fuelCalc.calculateFuelUsed(totalDistanceKm, mileage);
+      final fuelCost = fuelCalc.calculateFuelCost(fuelUsed, fuelPrice);
+
+      final participantList = _selectedParticipantIds.toList();
+      final shares = splitCalc.calculateEvenShares(fuelCost, participantList);
+
+      final newRide = Ride(
+        id: const Uuid().v4(),
+        name: _nameController.text.trim(),
+        date: DateTime.now(),
+        vehicleId: selectedBike.id,
+        vehicleName: selectedBike.name,
+        mileage: mileage,
+        fuelPrice: fuelPrice,
+        distanceKm: totalDistanceKm,
+        fuelUsedLiters: fuelUsed,
+        totalFuelCost: fuelCost,
+        trackingMode: _trackingMode,
+        isRoundTrip: _isRoundTrip,
+        stopCount: _manualWaypoints.length > 1 ? _manualWaypoints.length : 1,
+        paidBy: _paidBy,
+        participantIds: participantList,
+        participantShares: shares,
+      );
+
+      await ref.read(rideListProvider.notifier).addRide(newRide);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Ride saved successfully!'),
+            backgroundColor: Colors.green,
+            duration: Duration(seconds: 2),
+          ),
+        );
+        Navigator.of(context).pop();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to save ride: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+
+  void _updateManualDistanceDisplay() {
+    final effectiveKm = _isRoundTrip ? (_rawOneWayDistanceKm * 2) : _rawOneWayDistanceKm;
+    _manualDistanceController.text = effectiveKm.toStringAsFixed(2);
   }
 
   @override
@@ -480,6 +536,10 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
       _mileageController.text = defaultBike.mileage.toString();
       _fuelPriceController.text = defaultBike.defaultFuelPrice.toString();
     }
+
+    final effectiveDistanceKm = _trackingMode == 'GPS'
+        ? (_isRoundTrip ? _gpsDistanceKm * 2 : _gpsDistanceKm)
+        : (double.tryParse(_manualDistanceController.text.trim()) ?? 0.0);
 
     return Scaffold(
       appBar: AppBar(
@@ -556,6 +616,36 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
               ),
               const SizedBox(height: 16),
 
+              // Trip Type (One-Way vs Return Trip)
+              Row(
+                children: [
+                  Expanded(
+                    child: SegmentedButton<bool>(
+                      segments: const [
+                        ButtonSegment(
+                          value: false,
+                          label: Text('One-Way'),
+                          icon: Icon(Icons.arrow_forward),
+                        ),
+                        ButtonSegment(
+                          value: true,
+                          label: Text('Return Trip (2x)'),
+                          icon: Icon(Icons.sync),
+                        ),
+                      ],
+                      selected: {_isRoundTrip},
+                      onSelectionChanged: (set) {
+                        setState(() {
+                          _isRoundTrip = set.first;
+                          _updateManualDistanceDisplay();
+                        });
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+
               // Mileage & Today's Petrol Rate Setup
               Row(
                 children: [
@@ -607,23 +697,20 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
               SegmentedButton<String>(
                 segments: const [
                   ButtonSegment(value: 'GPS', label: Text('Live GPS Track'), icon: Icon(Icons.gps_fixed)),
-                  ButtonSegment(value: 'Manual', label: Text('Manual Map / Entry'), icon: Icon(Icons.map)),
+                  ButtonSegment(value: 'Manual', label: Text('Multi-Stop Map / Entry'), icon: Icon(Icons.map)),
                 ],
                 selected: {_trackingMode},
                 onSelectionChanged: (set) => setState(() => _trackingMode = set.first),
               ),
               const SizedBox(height: 16),
 
-              // Interactive Real OpenStreetMap Widget
+              // Interactive Multi-Stop OpenStreetMap Widget
               RealRouteMapWidget(
                 routePoints: _gpsRoutePoints,
-                currentDistanceKm: _trackingMode == 'GPS'
-                    ? _gpsDistanceKm
-                    : (double.tryParse(_manualDistanceController.text.trim()) ?? 0.0),
+                currentDistanceKm: effectiveDistanceKm,
                 isLiveTracking: _isTracking,
                 isManualMapMode: _trackingMode == 'Manual',
-                manualStartPoint: _manualStartPoint,
-                manualEndPoint: _manualEndPoint,
+                manualWaypoints: _manualWaypoints,
                 manualRoadPolyline: _manualRoadPolyline,
                 userCurrentLocation: _currentLocation,
                 onRequestLocation: () => _requestCurrentLocation(quiet: false),
@@ -633,17 +720,15 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                     _nameController.text = shortName;
                   }
                 },
-                onManualPointsSelected: (start, end, roadDistKm, polyline) {
+                onManualWaypointsSelected: (waypoints, roadDistKm, polyline) {
                   setState(() {
-                    _manualStartPoint = start;
-                    _manualEndPoint = end;
+                    _manualWaypoints = waypoints;
                     _manualRoadPolyline = polyline;
-                    _manualDistanceController.text = roadDistKm.toStringAsFixed(2);
+                    _rawOneWayDistanceKm = roadDistKm;
+                    _updateManualDistanceDisplay();
                   });
                 },
-
               ),
-
               const SizedBox(height: 8),
 
               // GPS Diagnostic Banner
@@ -730,16 +815,21 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                     }
                     if (_currentLocation != null) {
                       setState(() {
-                        _manualStartPoint = _currentLocation;
+                        if (_manualWaypoints.isEmpty) {
+                          _manualWaypoints.add(_currentLocation!);
+                        } else {
+                          _manualWaypoints[0] = _currentLocation!;
+                        }
                       });
 
-                      if (_manualEndPoint != null) {
+                      if (_manualWaypoints.length >= 2) {
                         final routingService = RoadRoutingService();
-                        final result = await routingService.getRoadRoute(_manualStartPoint!, _manualEndPoint!);
+                        final result = await routingService.getMultiStopRoadRoute(_manualWaypoints);
                         if (mounted) {
                           setState(() {
                             _manualRoadPolyline = result.polylinePoints;
-                            _manualDistanceController.text = result.distanceKm.toStringAsFixed(2);
+                            _rawOneWayDistanceKm = result.distanceKm;
+                            _updateManualDistanceDisplay();
                           });
                         }
                       }
@@ -761,13 +851,22 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                     child: Column(
                       children: [
                         Text(
-                          '${_gpsDistanceKm.toStringAsFixed(2)} km',
+                          '${effectiveDistanceKm.toStringAsFixed(2)} km',
                           style: TextStyle(
                             fontSize: 34,
                             fontWeight: FontWeight.bold,
                             color: _isTracking ? Colors.green.shade800 : Colors.blue.shade900,
                           ),
                         ),
+                        if (_isRoundTrip) ...[
+                          const SizedBox(height: 4),
+                          Chip(
+                            avatar: const Icon(Icons.sync, size: 14, color: Colors.white),
+                            label: Text('Return Trip Included (${_gpsDistanceKm.toStringAsFixed(2)} km x 2)'),
+                            backgroundColor: Colors.blue.shade800,
+                            labelStyle: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                          ),
+                        ],
                         const SizedBox(height: 6),
                         Text(
                           _isTracking
@@ -796,12 +895,12 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                 TextFormField(
                   controller: _manualDistanceController,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    labelText: 'Distance (km)',
-                    hintText: 'Tap 2 points on map or enter manually',
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.straighten),
-                    suffixText: 'km',
+                  decoration: InputDecoration(
+                    labelText: 'Total Distance (km)',
+                    hintText: 'Tap multiple stops on map or enter manually',
+                    border: const OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.straighten),
+                    suffixText: _isRoundTrip ? 'km (Round Trip)' : 'km',
                   ),
                   onChanged: (val) {
                     setState(() {});
@@ -887,7 +986,6 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                 gradientColors: const [Color(0xFF6366F1), Color(0xFF3B82F6), Color(0xFF06B6D4)],
                 onPressed: () => _saveRide(vehicles, friends),
               ),
-
             ],
           ),
         ),

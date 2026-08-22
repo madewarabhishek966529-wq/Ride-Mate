@@ -204,15 +204,16 @@ class InMemoryDatabaseAdapter implements AppDatabaseInterface {
     List<Object?>? whereArgs,
   }) async {
     final list = _tables[table] ?? [];
-    if (whereArgs != null && whereArgs.isNotEmpty) {
-      final targetId = whereArgs[0] as String;
-      final beforeLen = list.length;
-      list.removeWhere((item) => item['id'] == targetId);
-      return beforeLen - list.length;
+    final targetId = whereArgs != null && whereArgs.isNotEmpty ? whereArgs[0] as String : null;
+    int initialLength = list.length;
+
+    if (targetId != null) {
+      list.removeWhere((m) => m['id'] == targetId);
+    } else {
+      list.clear();
     }
-    final len = list.length;
-    list.clear();
-    return len;
+
+    return initialLength - list.length;
   }
 }
 
@@ -232,8 +233,10 @@ class AppDatabase {
       final path = join(dbPath, 'ridemate.db');
       final db = await openDatabase(
         path,
-        version: 1,
+        version: 2,
         onCreate: _onCreate,
+        onUpgrade: _onUpgrade,
+        onOpen: _onOpen,
       );
       _adapter = SqfliteDatabaseAdapter(db);
     } catch (e) {
@@ -245,6 +248,26 @@ class AppDatabase {
   static Future<AppDatabaseInterface> initInMemory() async {
     _adapter = InMemoryDatabaseAdapter();
     return _adapter!;
+  }
+
+  static Future<void> _onOpen(Database db) async {
+    try {
+      await db.execute('ALTER TABLE rides ADD COLUMN isRoundTrip INTEGER DEFAULT 0;');
+    } catch (_) {}
+    try {
+      await db.execute('ALTER TABLE rides ADD COLUMN stopCount INTEGER DEFAULT 1;');
+    } catch (_) {}
+  }
+
+  static Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      try {
+        await db.execute('ALTER TABLE rides ADD COLUMN isRoundTrip INTEGER DEFAULT 0;');
+      } catch (_) {}
+      try {
+        await db.execute('ALTER TABLE rides ADD COLUMN stopCount INTEGER DEFAULT 1;');
+      } catch (_) {}
+    }
   }
 
   static Future<void> _onCreate(Database db, int version) async {
@@ -291,6 +314,8 @@ class AppDatabase {
         fuelUsedLiters REAL NOT NULL,
         totalFuelCost REAL NOT NULL,
         trackingMode TEXT NOT NULL,
+        isRoundTrip INTEGER DEFAULT 0,
+        stopCount INTEGER DEFAULT 1,
         paidBy TEXT NOT NULL,
         participantIds TEXT NOT NULL,
         participantShares TEXT NOT NULL

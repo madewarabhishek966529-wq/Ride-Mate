@@ -106,34 +106,68 @@ class RideHistoryScreen extends ConsumerWidget {
                                   ),
                                 ),
                               ),
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                                decoration: BoxDecoration(
-                                  gradient: ride.trackingMode == 'GPS'
-                                      ? const LinearGradient(colors: [Color(0xFF10B981), Color(0xFF059669)])
-                                      : const LinearGradient(colors: [Color(0xFF6366F1), Color(0xFF3B82F6)]),
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Icon(
-                                      ride.trackingMode == 'GPS' ? Icons.gps_fixed : Icons.map,
-                                      size: 12,
-                                      color: Colors.white,
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      ride.trackingMode,
-                                      style: const TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.bold,
+                              Wrap(
+                                spacing: 6,
+                                children: [
+                                  if (ride.isRoundTrip)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: Colors.purple.shade700,
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: const Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Icon(Icons.sync, size: 11, color: Colors.white),
+                                          SizedBox(width: 3),
+                                          Text('Return', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                        ],
                                       ),
                                     ),
-                                  ],
-                                ),
+                                  if (ride.stopCount > 1)
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: Colors.orange.shade800,
+                                        borderRadius: BorderRadius.circular(10),
+                                      ),
+                                      child: Text(
+                                        '${ride.stopCount} Stops',
+                                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                    decoration: BoxDecoration(
+                                      gradient: ride.trackingMode == 'GPS'
+                                          ? const LinearGradient(colors: [Color(0xFF10B981), Color(0xFF059669)])
+                                          : const LinearGradient(colors: [Color(0xFF6366F1), Color(0xFF3B82F6)]),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(
+                                          ride.trackingMode == 'GPS' ? Icons.gps_fixed : Icons.map,
+                                          size: 12,
+                                          color: Colors.white,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          ride.trackingMode,
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                            fontSize: 11,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ),
+
                             ],
                           ),
                           const SizedBox(height: 4),

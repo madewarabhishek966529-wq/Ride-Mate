@@ -12,6 +12,8 @@ class Ride {
   final double fuelUsedLiters;
   final double totalFuelCost;
   final String trackingMode; // 'GPS' or 'Manual'
+  final bool isRoundTrip;
+  final int stopCount;
   final String paidBy; // 'ME' or friendId
   final List<String> participantIds;
   final Map<String, double> participantShares; // participantId -> amount
@@ -28,6 +30,8 @@ class Ride {
     required this.fuelUsedLiters,
     required this.totalFuelCost,
     required this.trackingMode,
+    this.isRoundTrip = false,
+    this.stopCount = 1,
     required this.paidBy,
     required this.participantIds,
     required this.participantShares,
@@ -46,6 +50,8 @@ class Ride {
       'fuelUsedLiters': fuelUsedLiters,
       'totalFuelCost': totalFuelCost,
       'trackingMode': trackingMode,
+      'isRoundTrip': isRoundTrip ? 1 : 0,
+      'stopCount': stopCount,
       'paidBy': paidBy,
       'participantIds': jsonEncode(participantIds),
       'participantShares': jsonEncode(participantShares),
@@ -68,6 +74,8 @@ class Ride {
       fuelUsedLiters: (map['fuelUsedLiters'] as num).toDouble(),
       totalFuelCost: (map['totalFuelCost'] as num).toDouble(),
       trackingMode: map['trackingMode'] as String,
+      isRoundTrip: (map['isRoundTrip'] as int?) == 1,
+      stopCount: (map['stopCount'] as int?) ?? 1,
       paidBy: map['paidBy'] as String,
       participantIds: List<String>.from(jsonDecode(map['participantIds'] as String) as List),
       participantShares: shares,
