@@ -10,7 +10,9 @@ import '../../domain/models/ride.dart';
 import '../../domain/models/vehicle.dart';
 import '../../providers/providers.dart';
 import '../../services/road_routing_service.dart';
+import '../widgets/gradient_button.dart';
 import '../widgets/real_route_map_widget.dart';
+
 
 class RideTrackingScreen extends ConsumerStatefulWidget {
   const RideTrackingScreen({super.key});
@@ -879,16 +881,13 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
               const SizedBox(height: 24),
 
               // Save Button
-              ElevatedButton.icon(
+              GradientButton(
+                text: 'Save & Calculate Ride',
+                icon: Icons.check_circle,
+                gradientColors: const [Color(0xFF6366F1), Color(0xFF3B82F6), Color(0xFF06B6D4)],
                 onPressed: () => _saveRide(vehicles, friends),
-                icon: const Icon(Icons.check_circle),
-                label: const Text('Save & Calculate Ride'),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 14),
-                  backgroundColor: Colors.blue.shade800,
-                  foregroundColor: Colors.white,
-                ),
               ),
+
             ],
           ),
         ),
