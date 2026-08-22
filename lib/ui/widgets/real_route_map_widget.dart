@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import '../../services/location_search_service.dart';
 import '../../services/road_routing_service.dart';
 
 class RealRouteMapWidget extends StatefulWidget {
@@ -13,6 +15,7 @@ class RealRouteMapWidget extends StatefulWidget {
   final List<LatLng>? manualRoadPolyline;
   final Function(LatLng start, LatLng end, double calculatedRoadDistanceKm, List<LatLng> roadPolyline)?
       onManualPointsSelected;
+  final Function(String placeName, LatLng location)? onPlaceSearched;
   final LatLng? userCurrentLocation;
   final Future<void> Function()? onRequestLocation;
 
@@ -26,6 +29,7 @@ class RealRouteMapWidget extends StatefulWidget {
     this.manualEndPoint,
     this.manualRoadPolyline,
     this.onManualPointsSelected,
+    this.onPlaceSearched,
     this.userCurrentLocation,
     this.onRequestLocation,
   });
@@ -42,7 +46,13 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
   bool _isLocating = false;
   bool _isRouting = false;
 
-  // Default fallback center (New Delhi / India center fallback if GPS not yet retrieved)
+  // Location search state
+  final _searchController = TextEditingController();
+  final _searchService = LocationSearchService();
+  List<LocationSearchResult> _searchResults = [];
+  bool _isSearching = false;
+  Timer? _debounceTimer;
+
   static const LatLng _defaultCenter = LatLng(28.6139, 77.2090);
 
   @override
@@ -52,6 +62,13 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
     _manualStart = widget.manualStartPoint;
     _manualEnd = widget.manualEndPoint;
     _manualRoadPolyline = widget.manualRoadPolyline ?? [];
+  }
+
+  @override
+  void dispose() {
+    _debounceTimer?.cancel();
+    _searchController.dispose();
+    super.dispose();
   }
 
   @override
@@ -68,7 +85,75 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
     }
   }
 
+  void _onSearchQueryChanged(String query) {
+    _debounceTimer?.cancel();
+    if (query.trim().length < 2) {
+      setState(() {
+        _searchResults = [];
+        _isSearching = false;
+      });
+      return;
+    }
+
+    setState(() => _isSearching = true);
+    _debounceTimer = Timer(const Duration(milliseconds: 400), () async {
+      final results = await _searchService.searchPlaces(query);
+      if (mounted) {
+        setState(() {
+          _searchResults = results;
+          _isSearching = false;
+        });
+      }
+    });
+  }
+
+  Future<void> _selectSearchedLocation(LocationSearchResult result) async {
+    _searchController.text = result.displayName.split(',').first;
+    setState(() {
+      _searchResults = [];
+    });
+
+    _mapController.move(result.location, 16.0);
+    widget.onPlaceSearched?.call(result.displayName, result.location);
+
+    if (widget.isManualMapMode) {
+      if (_manualStart == null || (_manualStart != null && _manualEnd != null)) {
+        setState(() {
+          _manualStart = result.location;
+          _manualEnd = null;
+          _manualRoadPolyline.clear();
+        });
+      } else {
+        setState(() {
+          _manualEnd = result.location;
+          _isRouting = true;
+        });
+
+        final routingService = RoadRoutingService();
+        final routeResult = await routingService.getRoadRoute(_manualStart!, _manualEnd!);
+
+        if (mounted) {
+          setState(() {
+            _manualRoadPolyline = routeResult.polylinePoints;
+            _isRouting = false;
+          });
+          widget.onManualPointsSelected?.call(
+            _manualStart!,
+            _manualEnd!,
+            routeResult.distanceKm,
+            routeResult.polylinePoints,
+          );
+        }
+      }
+    }
+  }
+
   Future<void> _onMapTap(TapPosition tapPosition, LatLng point) async {
+    // Dismiss search results if open
+    if (_searchResults.isNotEmpty) {
+      setState(() => _searchResults = []);
+    }
+
     if (!widget.isManualMapMode) return;
 
     if (_manualStart == null || (_manualStart != null && _manualEnd != null)) {
@@ -137,6 +222,7 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
           manualRoadPolyline: _manualRoadPolyline,
           userCurrentLocation: widget.userCurrentLocation,
           onRequestLocation: widget.onRequestLocation,
+          onPlaceSearched: widget.onPlaceSearched,
           onManualPointsSelected: (start, end, roadDistKm, polyline) {
             setState(() {
               _manualStart = start;
@@ -155,10 +241,8 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final center = _getCenterLocation();
 
-    // Determine markers
     final List<Marker> markers = [];
 
-    // Current User Location Marker (Pulsing / Blue dot)
     if (widget.userCurrentLocation != null) {
       markers.add(
         Marker(
@@ -215,7 +299,6 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
       }
     } else {
       if (widget.routePoints.isNotEmpty) {
-        // Start marker
         markers.add(
           Marker(
             point: widget.routePoints.first,
@@ -224,7 +307,6 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
             child: const Icon(Icons.trip_origin, color: Colors.green, size: 30),
           ),
         );
-        // Current / End location marker
         markers.add(
           Marker(
             point: widget.routePoints.last,
@@ -243,7 +325,6 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
       }
     }
 
-    // Determine Polyline
     final List<Polyline> polylines = [];
     if (widget.isManualMapMode && _manualStart != null && _manualEnd != null) {
       final polylinePoints = _manualRoadPolyline.isNotEmpty
@@ -276,7 +357,7 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
       elevation: 4,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       child: SizedBox(
-        height: 300,
+        height: 320,
         child: Stack(
           children: [
             // OpenStreetMap Interactive Canvas
@@ -298,62 +379,86 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
               ],
             ),
 
-            // Top Status Header Badge
+            // Location Search Bar Overlay
             Positioned(
-              top: 12,
-              left: 12,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                decoration: BoxDecoration(
-                  color: isDark ? Colors.black87 : Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_isRouting)
-                      const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    else
-                      Icon(
-                        widget.isLiveTracking
-                            ? Icons.gps_fixed
-                            : (widget.isManualMapMode ? Icons.alt_route : Icons.map),
-                        size: 16,
-                        color: widget.isLiveTracking ? Colors.green : Colors.blue,
-                      ),
-                    const SizedBox(width: 6),
-                    Text(
-                      widget.isLiveTracking
-                          ? 'LIVE GPS TRACKING'
-                          : (widget.isManualMapMode
-                              ? (_isRouting
-                                  ? 'CALCULATING ROAD ROUTE...'
-                                  : (_manualStart == null
-                                      ? 'TAP MAP FOR START POINT'
-                                      : (_manualEnd == null
-                                          ? 'TAP MAP FOR END POINT'
-                                          : 'ROAD ROUTE CALCULATED')))
-                              : (widget.userCurrentLocation != null ? 'CURRENT LOCATION' : 'OPENSTREETMAP')),
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        color: isDark ? Colors.white : Colors.black87,
+              top: 10,
+              left: 10,
+              right: 52,
+              child: Column(
+                children: [
+                  Container(
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: isDark ? Colors.grey.shade900 : Colors.white,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6)],
+                    ),
+                    child: TextField(
+                      controller: _searchController,
+                      style: TextStyle(fontSize: 13, color: isDark ? Colors.white : Colors.black87),
+                      onChanged: _onSearchQueryChanged,
+                      decoration: InputDecoration(
+                        hintText: 'Search city, street or location...',
+                        hintStyle: const TextStyle(fontSize: 12, color: Colors.grey),
+                        prefixIcon: const Icon(Icons.search, size: 18),
+                        suffixIcon: _isSearching
+                            ? const Padding(
+                                padding: EdgeInsets.all(10.0),
+                                child: SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2)),
+                              )
+                            : (_searchController.text.isNotEmpty
+                                ? IconButton(
+                                    icon: const Icon(Icons.clear, size: 16),
+                                    onPressed: () {
+                                      _searchController.clear();
+                                      setState(() => _searchResults = []);
+                                    },
+                                  )
+                                : null),
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 10),
                       ),
                     ),
-                  ],
-                ),
+                  ),
+                  if (_searchResults.isNotEmpty)
+                    Container(
+                      margin: const EdgeInsets.only(top: 4),
+                      constraints: const BoxConstraints(maxHeight: 150),
+                      decoration: BoxDecoration(
+                        color: isDark ? Colors.grey.shade900 : Colors.white,
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 6)],
+                      ),
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: _searchResults.length,
+                        separatorBuilder: (ctx, idx) => const Divider(height: 1),
+
+                        itemBuilder: (context, index) {
+                          final item = _searchResults[index];
+                          return ListTile(
+                            dense: true,
+                            visualDensity: VisualDensity.compact,
+                            leading: const Icon(Icons.location_on, size: 16, color: Colors.redAccent),
+                            title: Text(
+                              item.displayName,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                            onTap: () => _selectSearchedLocation(item),
+                          );
+                        },
+                      ),
+                    ),
+                ],
               ),
             ),
 
-            // Full Screen Mode Floating Button
+            // Full Screen Mode Button
             Positioned(
-              top: 12,
-              right: 12,
+              top: 10,
+              right: 10,
               child: InkWell(
                 onTap: () => _openFullScreenMap(context),
                 child: Container(
@@ -372,7 +477,7 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
               ),
             ),
 
-            // Distance HUD Overlay Badge
+            // Distance HUD Badge
             Positioned(
               bottom: 12,
               right: 12,
@@ -383,18 +488,32 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
                   borderRadius: BorderRadius.circular(20),
                   boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 4)],
                 ),
-                child: Text(
-                  '${widget.currentDistanceKm.toStringAsFixed(2)} km',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 15,
-                  ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_isRouting) ...[
+                      const SizedBox(
+                        width: 12,
+                        height: 12,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    Text(
+                      '${widget.currentDistanceKm.toStringAsFixed(2)} km',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ],
                 ),
+
               ),
             ),
 
-            // Recenter Map Floating Button
+            // Recenter Map FAB
             Positioned(
               bottom: 12,
               left: 12,
@@ -429,6 +548,7 @@ class FullScreenMapScreen extends StatefulWidget {
   final List<LatLng>? manualRoadPolyline;
   final Function(LatLng start, LatLng end, double calculatedRoadDistanceKm, List<LatLng> roadPolyline)?
       onManualPointsSelected;
+  final Function(String placeName, LatLng location)? onPlaceSearched;
   final LatLng? userCurrentLocation;
   final Future<void> Function()? onRequestLocation;
 
@@ -442,6 +562,7 @@ class FullScreenMapScreen extends StatefulWidget {
     this.manualEndPoint,
     this.manualRoadPolyline,
     this.onManualPointsSelected,
+    this.onPlaceSearched,
     this.userCurrentLocation,
     this.onRequestLocation,
   });
@@ -459,6 +580,12 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
   bool _isLocating = false;
   bool _isRouting = false;
 
+  final _searchController = TextEditingController();
+  final _searchService = LocationSearchService();
+  List<LocationSearchResult> _searchResults = [];
+  bool _isSearching = false;
+  Timer? _debounceTimer;
+
   static const LatLng _defaultCenter = LatLng(28.6139, 77.2090);
 
   @override
@@ -471,7 +598,82 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
     _distanceKm = widget.currentDistanceKm;
   }
 
+  @override
+  void dispose() {
+    _debounceTimer?.cancel();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  void _onSearchQueryChanged(String query) {
+    _debounceTimer?.cancel();
+    if (query.trim().length < 2) {
+      setState(() {
+        _searchResults = [];
+        _isSearching = false;
+      });
+      return;
+    }
+
+    setState(() => _isSearching = true);
+    _debounceTimer = Timer(const Duration(milliseconds: 400), () async {
+      final results = await _searchService.searchPlaces(query);
+      if (mounted) {
+        setState(() {
+          _searchResults = results;
+          _isSearching = false;
+        });
+      }
+    });
+  }
+
+  Future<void> _selectSearchedLocation(LocationSearchResult result) async {
+    _searchController.text = result.displayName.split(',').first;
+    setState(() {
+      _searchResults = [];
+    });
+
+    _mapController.move(result.location, 16.0);
+    widget.onPlaceSearched?.call(result.displayName, result.location);
+
+    if (widget.isManualMapMode) {
+      if (_manualStart == null || (_manualStart != null && _manualEnd != null)) {
+        setState(() {
+          _manualStart = result.location;
+          _manualEnd = null;
+          _manualRoadPolyline.clear();
+        });
+      } else {
+        setState(() {
+          _manualEnd = result.location;
+          _isRouting = true;
+        });
+
+        final routingService = RoadRoutingService();
+        final routeResult = await routingService.getRoadRoute(_manualStart!, _manualEnd!);
+
+        if (mounted) {
+          setState(() {
+            _manualRoadPolyline = routeResult.polylinePoints;
+            _distanceKm = routeResult.distanceKm;
+            _isRouting = false;
+          });
+          widget.onManualPointsSelected?.call(
+            _manualStart!,
+            _manualEnd!,
+            routeResult.distanceKm,
+            routeResult.polylinePoints,
+          );
+        }
+      }
+    }
+  }
+
   Future<void> _onMapTap(TapPosition tapPosition, LatLng point) async {
+    if (_searchResults.isNotEmpty) {
+      setState(() => _searchResults = []);
+    }
+
     if (!widget.isManualMapMode) return;
 
     if (_manualStart == null || (_manualStart != null && _manualEnd != null)) {
@@ -679,55 +881,78 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
             ],
           ),
 
-          // Header Status Badge
+          // Location Search Bar Overlay in Full Screen Mode
           Positioned(
             top: 16,
             left: 16,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              decoration: BoxDecoration(
-                color: isDark ? Colors.black87 : Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6)],
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (_isRouting)
-                    const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  else
-                    Icon(
-                      widget.isLiveTracking
-                          ? Icons.gps_fixed
-                          : (widget.isManualMapMode ? Icons.alt_route : Icons.map),
-                      size: 18,
-                      color: widget.isLiveTracking ? Colors.green : Colors.blue,
-                    ),
-                  const SizedBox(width: 8),
-                  Text(
-                    widget.isLiveTracking
-                        ? 'LIVE GPS TRACKING'
-                        : (widget.isManualMapMode
-                            ? (_isRouting
-                                ? 'CALCULATING ROAD ROUTE...'
-                                : (_manualStart == null
-                                    ? 'TAP MAP TO PLACE START PIN'
-                                    : (_manualEnd == null
-                                        ? 'TAP MAP TO PLACE DESTINATION PIN'
-                                        : 'ROAD ROUTE CALCULATED')))
-                            : 'FULL SCREEN MAP'),
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
-                      color: isDark ? Colors.white : Colors.black87,
+            right: 16,
+            child: Column(
+              children: [
+                Container(
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: isDark ? Colors.grey.shade900 : Colors.white,
+                    borderRadius: BorderRadius.circular(22),
+                    boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 8)],
+                  ),
+                  child: TextField(
+                    controller: _searchController,
+                    style: TextStyle(fontSize: 14, color: isDark ? Colors.white : Colors.black87),
+                    onChanged: _onSearchQueryChanged,
+                    decoration: InputDecoration(
+                      hintText: 'Search city, street or location name...',
+                      hintStyle: const TextStyle(fontSize: 13, color: Colors.grey),
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      suffixIcon: _isSearching
+                          ? const Padding(
+                              padding: EdgeInsets.all(12.0),
+                              child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                            )
+                          : (_searchController.text.isNotEmpty
+                              ? IconButton(
+                                  icon: const Icon(Icons.clear, size: 18),
+                                  onPressed: () {
+                                    _searchController.clear();
+                                    setState(() => _searchResults = []);
+                                  },
+                                )
+                              : null),
+                      border: InputBorder.none,
+                      contentPadding: const EdgeInsets.symmetric(vertical: 12),
                     ),
                   ),
-                ],
-              ),
+                ),
+                if (_searchResults.isNotEmpty)
+                  Container(
+                    margin: const EdgeInsets.only(top: 6),
+                    constraints: const BoxConstraints(maxHeight: 200),
+                    decoration: BoxDecoration(
+                      color: isDark ? Colors.grey.shade900 : Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 8)],
+                    ),
+                    child: ListView.separated(
+                      shrinkWrap: true,
+                      itemCount: _searchResults.length,
+                      separatorBuilder: (ctx, idx) => const Divider(height: 1),
+
+                      itemBuilder: (context, index) {
+                        final item = _searchResults[index];
+                        return ListTile(
+                          dense: true,
+                          leading: const Icon(Icons.location_on, size: 18, color: Colors.redAccent),
+                          title: Text(
+                            item.displayName,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                          onTap: () => _selectSearchedLocation(item),
+                        );
+                      },
+                    ),
+                  ),
+              ],
             ),
           ),
 
@@ -742,14 +967,28 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
                 borderRadius: BorderRadius.circular(24),
                 boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 6)],
               ),
-              child: Text(
-                '${_distanceKm.toStringAsFixed(2)} km',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                  fontSize: 18,
-                ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_isRouting) ...[
+                    const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  Text(
+                    '${_distanceKm.toStringAsFixed(2)} km',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 18,
+                    ),
+                  ),
+                ],
               ),
+
             ),
           ),
 

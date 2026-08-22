@@ -625,6 +625,12 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                 manualRoadPolyline: _manualRoadPolyline,
                 userCurrentLocation: _currentLocation,
                 onRequestLocation: () => _requestCurrentLocation(quiet: false),
+                onPlaceSearched: (placeName, location) {
+                  if (_nameController.text == 'Ride' || _nameController.text.trim().isEmpty) {
+                    final shortName = placeName.split(',').first;
+                    _nameController.text = shortName;
+                  }
+                },
                 onManualPointsSelected: (start, end, roadDistKm, polyline) {
                   setState(() {
                     _manualStartPoint = start;
@@ -633,7 +639,9 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                     _manualDistanceController.text = roadDistKm.toStringAsFixed(2);
                   });
                 },
+
               ),
+
               const SizedBox(height: 8),
 
               // GPS Diagnostic Banner
