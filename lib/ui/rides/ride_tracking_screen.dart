@@ -1,12 +1,15 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:uuid/uuid.dart';
 import '../../domain/models/friend.dart';
 import '../../domain/models/ride.dart';
+import '../../domain/models/vehicle.dart';
 import '../../providers/providers.dart';
+import '../../services/road_routing_service.dart';
 import '../widgets/real_route_map_widget.dart';
 
 class RideTrackingScreen extends ConsumerStatefulWidget {
@@ -23,6 +26,7 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
   final _mileageController = TextEditingController(text: '45.0');
   final _fuelPriceController = TextEditingController(text: '100.0');
 
+  String? _selectedVehicleId;
   String _trackingMode = 'GPS'; // 'GPS' or 'Manual'
   String _paidBy = 'ME'; // 'ME' or friendId
   final Set<String> _selectedParticipantIds = {'ME'}; // 'ME' + friend IDs
@@ -43,6 +47,7 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
   // Manual Map selection state
   LatLng? _manualStartPoint;
   LatLng? _manualEndPoint;
+  List<LatLng> _manualRoadPolyline = [];
 
   @override
   void initState() {
@@ -64,7 +69,7 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
     await _requestCurrentLocation(quiet: true);
   }
 
-  /// Multi-tier robust location fetch strategy (Last Known -> High Acc -> Medium Acc -> Low Acc)
+  /// Multi-tier robust location fetch strategy
   Future<void> _requestCurrentLocation({bool quiet = false}) async {
     if (!mounted) return;
     setState(() {
@@ -73,7 +78,6 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
     });
 
     try {
-      // 1. Check Location Service Status
       _locationServiceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!_locationServiceEnabled) {
         setState(() {
@@ -96,7 +100,6 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
         return;
       }
 
-      // 2. Check & Request Permissions
       _locationPermission = await Geolocator.checkPermission();
       if (_locationPermission == LocationPermission.denied) {
         _locationPermission = await Geolocator.requestPermission();
@@ -134,10 +137,8 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
         return;
       }
 
-      // 3. Tier 1: Try Last Known Position (Instant on mobile devices)
       Position? pos = await Geolocator.getLastKnownPosition();
 
-      // 4. Tier 2: Try Current Position High/Medium Accuracy
       if (pos == null) {
         try {
           pos = await Geolocator.getCurrentPosition(
@@ -147,7 +148,6 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
             ),
           );
         } catch (_) {
-          // Tier 3: Fallback Low Accuracy
           try {
             pos = await Geolocator.getCurrentPosition(
               locationSettings: const LocationSettings(
@@ -187,6 +187,23 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
           );
         }
       }
+    } on MissingPluginException {
+      if (mounted) {
+        setState(() {
+          _isFetchingLocation = false;
+          _locationStatusMessage =
+              'App Restart Required: Please stop & re-run the app (flutter run) to link native GPS plugins.';
+        });
+        if (!quiet) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Please stop and re-run the app (flutter run) to compile native GPS plugin.'),
+              backgroundColor: Colors.red,
+              duration: Duration(seconds: 5),
+            ),
+          );
+        }
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -202,8 +219,107 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
     }
   }
 
+  void _showAddBikeDialog() {
+    final bikeNameController = TextEditingController();
+    final bikeMileageController = TextEditingController(text: '45.0');
+    final bikePriceController = TextEditingController(text: '100.0');
+    bool isDefaultBike = false;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) {
+            return AlertDialog(
+              title: const Text('Add New Bike Profile'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: bikeNameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Bike Name (e.g. Pulsar 150)',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.two_wheeler),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: bikeMileageController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Average Mileage (km/L)',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.speed),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: bikePriceController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: "Today's Petrol Rate (₹/L)",
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.local_gas_station),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    CheckboxListTile(
+                      title: const Text('Set as Default Bike'),
+                      value: isDefaultBike,
+                      onChanged: (val) {
+                        setDialogState(() {
+                          isDefaultBike = val ?? false;
+                        });
+                      },
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    final name = bikeNameController.text.trim();
+                    final mileage = double.tryParse(bikeMileageController.text.trim()) ?? 45.0;
+                    final price = double.tryParse(bikePriceController.text.trim()) ?? 100.0;
+
+                    if (name.isEmpty) return;
+
+                    final newBike = Vehicle(
+                      id: const Uuid().v4(),
+                      name: name,
+                      mileage: mileage,
+                      defaultFuelPrice: price,
+                      isDefault: isDefaultBike,
+                    );
+
+                    await ref.read(vehicleListProvider.notifier).addVehicle(newBike);
+
+                    if (dialogContext.mounted) {
+                      setState(() {
+                        _selectedVehicleId = newBike.id;
+                        _mileageController.text = newBike.mileage.toString();
+                        _fuelPriceController.text = newBike.defaultFuelPrice.toString();
+                      });
+                      Navigator.of(dialogContext).pop();
+                    }
+                  },
+                  child: const Text('Save Bike'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   Future<void> _startGpsTracking() async {
-    // 1. Ensure location is available
     if (_currentLocation == null) {
       await _requestCurrentLocation(quiet: false);
     }
@@ -220,7 +336,6 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
       return;
     }
 
-    // 2. Start Real GPS Stream
     try {
       setState(() {
         _isTracking = true;
@@ -251,7 +366,6 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                 newLatLng.longitude,
               );
 
-              // Accrue real distance if valid physical movement occurs (> 1.0m)
               if (metersMoved > 1.0) {
                 _gpsDistanceKm += (metersMoved / 1000.0);
                 _gpsRoutePoints.add(newLatLng);
@@ -287,11 +401,21 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
     });
   }
 
-  Future<void> _saveRide(List<Friend> friends) async {
+  Future<void> _saveRide(List<Vehicle> vehicles, List<Friend> friends) async {
     if (!_formKey.currentState!.validate()) return;
 
     final mileage = double.tryParse(_mileageController.text.trim()) ?? 45.0;
     final fuelPrice = double.tryParse(_fuelPriceController.text.trim()) ?? 100.0;
+
+    final selectedBike = vehicles.firstWhere(
+      (v) => v.id == _selectedVehicleId,
+      orElse: () => Vehicle(
+        id: 'default',
+        name: 'Bike',
+        mileage: mileage,
+        defaultFuelPrice: fuelPrice,
+      ),
+    );
 
     final distanceKm = _trackingMode == 'GPS'
         ? _gpsDistanceKm
@@ -319,8 +443,8 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
       id: const Uuid().v4(),
       name: _nameController.text.trim(),
       date: DateTime.now(),
-      vehicleId: 'default',
-      vehicleName: 'Vehicle (${mileage.toStringAsFixed(1)} km/L)',
+      vehicleId: selectedBike.id,
+      vehicleName: selectedBike.name,
       mileage: mileage,
       fuelPrice: fuelPrice,
       distanceKm: distanceKm,
@@ -344,7 +468,16 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final vehicles = ref.watch(vehicleListProvider);
     final friends = ref.watch(friendListProvider);
+
+    // Auto-select Default Bike on screen load
+    if (_selectedVehicleId == null && vehicles.isNotEmpty) {
+      final defaultBike = vehicles.firstWhere((v) => v.isDefault, orElse: () => vehicles.first);
+      _selectedVehicleId = defaultBike.id;
+      _mileageController.text = defaultBike.mileage.toString();
+      _fuelPriceController.text = defaultBike.defaultFuelPrice.toString();
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -370,6 +503,45 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // Bike Selector & Quick Add Button
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      initialValue: _selectedVehicleId,
+                      decoration: const InputDecoration(
+                        labelText: 'Select Bike',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.two_wheeler),
+                      ),
+                      items: vehicles.map((v) {
+                        return DropdownMenuItem(
+                          value: v.id,
+                          child: Text('${v.name} (${v.mileage.toStringAsFixed(0)} km/L)'),
+                        );
+                      }).toList(),
+                      onChanged: (val) {
+                        if (val != null) {
+                          final bike = vehicles.firstWhere((v) => v.id == val);
+                          setState(() {
+                            _selectedVehicleId = val;
+                            _mileageController.text = bike.mileage.toString();
+                            _fuelPriceController.text = bike.defaultFuelPrice.toString();
+                          });
+                        }
+                      },
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton.filledTonal(
+                    onPressed: _showAddBikeDialog,
+                    icon: const Icon(Icons.add),
+                    tooltip: 'Add New Bike',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+
               // Ride Title / Destination Name
               TextFormField(
                 controller: _nameController,
@@ -382,7 +554,7 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
               ),
               const SizedBox(height: 16),
 
-              // Mileage & Fuel Price Setup
+              // Mileage & Today's Petrol Rate Setup
               Row(
                 children: [
                   Expanded(
@@ -390,12 +562,12 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                       controller: _mileageController,
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
                       decoration: const InputDecoration(
-                        labelText: 'Mileage (km/L)',
+                        labelText: 'Bike Avg (km/L)',
                         border: OutlineInputBorder(),
                         prefixIcon: Icon(Icons.speed),
                       ),
                       validator: (val) {
-                        if (val == null || val.trim().isEmpty) return 'Enter mileage';
+                        if (val == null || val.trim().isEmpty) return 'Enter average';
                         final numVal = double.tryParse(val.trim());
                         if (numVal == null || numVal <= 0) return 'Valid > 0';
                         return null;
@@ -408,12 +580,12 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                       controller: _fuelPriceController,
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
                       decoration: const InputDecoration(
-                        labelText: 'Fuel Price (₹/L)',
+                        labelText: "Today's Petrol Rate (₹/L)",
                         border: OutlineInputBorder(),
                         prefixIcon: Icon(Icons.local_gas_station),
                       ),
                       validator: (val) {
-                        if (val == null || val.trim().isEmpty) return 'Enter fuel price';
+                        if (val == null || val.trim().isEmpty) return 'Enter rate';
                         final numVal = double.tryParse(val.trim());
                         if (numVal == null || numVal <= 0) return 'Valid > 0';
                         return null;
@@ -450,19 +622,21 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                 isManualMapMode: _trackingMode == 'Manual',
                 manualStartPoint: _manualStartPoint,
                 manualEndPoint: _manualEndPoint,
+                manualRoadPolyline: _manualRoadPolyline,
                 userCurrentLocation: _currentLocation,
                 onRequestLocation: () => _requestCurrentLocation(quiet: false),
-                onManualPointsSelected: (start, end, distKm) {
+                onManualPointsSelected: (start, end, roadDistKm, polyline) {
                   setState(() {
                     _manualStartPoint = start;
                     _manualEndPoint = end;
-                    _manualDistanceController.text = distKm.toStringAsFixed(2);
+                    _manualRoadPolyline = polyline;
+                    _manualDistanceController.text = roadDistKm.toStringAsFixed(2);
                   });
                 },
               ),
               const SizedBox(height: 8),
 
-              // GPS Diagnostic Banner & Troubleshooting Controls
+              // GPS Diagnostic Banner
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
@@ -509,7 +683,9 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                         ),
                       ],
                     ),
-                    if (!_locationServiceEnabled || _locationPermission != LocationPermission.always && _locationPermission != LocationPermission.whileInUse) ...[
+                    if (!_locationServiceEnabled ||
+                        (_locationPermission != LocationPermission.always &&
+                            _locationPermission != LocationPermission.whileInUse)) ...[
                       const Divider(height: 12),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -545,16 +721,18 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                     if (_currentLocation != null) {
                       setState(() {
                         _manualStartPoint = _currentLocation;
-                        if (_manualEndPoint != null) {
-                          final distMeters = Geolocator.distanceBetween(
-                            _manualStartPoint!.latitude,
-                            _manualStartPoint!.longitude,
-                            _manualEndPoint!.latitude,
-                            _manualEndPoint!.longitude,
-                          );
-                          _manualDistanceController.text = (distMeters / 1000.0).toStringAsFixed(2);
-                        }
                       });
+
+                      if (_manualEndPoint != null) {
+                        final routingService = RoadRoutingService();
+                        final result = await routingService.getRoadRoute(_manualStartPoint!, _manualEndPoint!);
+                        if (mounted) {
+                          setState(() {
+                            _manualRoadPolyline = result.polylinePoints;
+                            _manualDistanceController.text = result.distanceKm.toStringAsFixed(2);
+                          });
+                        }
+                      }
                     }
                   },
                   icon: const Icon(Icons.my_location, size: 18),
@@ -694,7 +872,7 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
 
               // Save Button
               ElevatedButton.icon(
-                onPressed: () => _saveRide(friends),
+                onPressed: () => _saveRide(vehicles, friends),
                 icon: const Icon(Icons.check_circle),
                 label: const Text('Save & Calculate Ride'),
                 style: ElevatedButton.styleFrom(

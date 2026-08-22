@@ -3,9 +3,11 @@ import '../data/database/app_database.dart';
 import '../data/repositories/friend_repository.dart';
 import '../data/repositories/ride_repository.dart';
 import '../data/repositories/settlement_repository.dart';
+import '../data/repositories/vehicle_repository.dart';
 import '../domain/models/friend.dart';
 import '../domain/models/ride.dart';
 import '../domain/models/settlement_record.dart';
+import '../domain/models/vehicle.dart';
 import '../services/distance_calculation_service.dart';
 import '../services/export_service.dart';
 import '../services/fuel_calculation_service.dart';
@@ -18,6 +20,11 @@ final databaseProvider = Provider<AppDatabaseInterface>((ref) {
 });
 
 // Repositories
+final vehicleRepositoryProvider = Provider<VehicleRepository>((ref) {
+  final db = ref.watch(databaseProvider);
+  return VehicleRepository(db);
+});
+
 final friendRepositoryProvider = Provider<FriendRepository>((ref) {
   final db = ref.watch(databaseProvider);
   return FriendRepository(db);
@@ -52,6 +59,40 @@ final ledgerServiceProvider = Provider<LedgerService>((ref) {
 
 final exportServiceProvider = Provider<ExportService>((ref) {
   return ExportService();
+});
+
+// Vehicles / Bikes Notifier
+class VehicleListNotifier extends StateNotifier<List<Vehicle>> {
+  final VehicleRepository _repo;
+
+  VehicleListNotifier(this._repo) : super([]) {
+    loadVehicles();
+  }
+
+  Future<void> loadVehicles() async {
+    final vehicles = await _repo.getAllVehicles();
+    state = vehicles;
+  }
+
+  Future<void> addVehicle(Vehicle vehicle) async {
+    await _repo.insertVehicle(vehicle);
+    await loadVehicles();
+  }
+
+  Future<void> updateVehicle(Vehicle vehicle) async {
+    await _repo.updateVehicle(vehicle);
+    await loadVehicles();
+  }
+
+  Future<void> deleteVehicle(String id) async {
+    await _repo.deleteVehicle(id);
+    await loadVehicles();
+  }
+}
+
+final vehicleListProvider = StateNotifierProvider<VehicleListNotifier, List<Vehicle>>((ref) {
+  final repo = ref.watch(vehicleRepositoryProvider);
+  return VehicleListNotifier(repo);
 });
 
 // Friends Notifier
