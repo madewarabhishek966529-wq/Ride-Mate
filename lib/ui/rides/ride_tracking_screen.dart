@@ -9,9 +9,9 @@ import '../../domain/models/friend.dart';
 import '../../domain/models/ride.dart';
 import '../../domain/models/vehicle.dart';
 import '../../providers/providers.dart';
-import '../../services/road_routing_service.dart';
 import '../widgets/gradient_button.dart';
 import '../widgets/real_route_map_widget.dart';
+
 
 class RideTrackingScreen extends ConsumerStatefulWidget {
   const RideTrackingScreen({super.key});
@@ -42,9 +42,9 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
 
   // Diagnostic location state
   bool _isFetchingLocation = false;
-  String _locationStatusMessage = 'Checking GPS...';
   bool _locationServiceEnabled = true;
   LocationPermission _locationPermission = LocationPermission.denied;
+
 
   // Manual Map selection state (Multi-Stop Waypoints)
   List<LatLng> _manualWaypoints = [];
@@ -76,7 +76,6 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
     if (!mounted) return;
     setState(() {
       _isFetchingLocation = true;
-      _locationStatusMessage = 'Requesting GPS location...';
     });
 
     try {
@@ -84,12 +83,11 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
       if (!_locationServiceEnabled) {
         setState(() {
           _isFetchingLocation = false;
-          _locationStatusMessage = 'GPS / Location services disabled on device.';
         });
         if (!quiet && mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: const Text('GPS is turned off. Tap "Open Settings" to turn on location.'),
+              content: const Text('GPS is turned off. Tap "Settings" to turn on.'),
               backgroundColor: Colors.orange.shade800,
               action: SnackBarAction(
                 label: 'SETTINGS',
@@ -110,7 +108,6 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
       if (_locationPermission == LocationPermission.denied) {
         setState(() {
           _isFetchingLocation = false;
-          _locationStatusMessage = 'Location permission denied by user.';
         });
         if (!quiet && mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -123,14 +120,13 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
       if (_locationPermission == LocationPermission.deniedForever) {
         setState(() {
           _isFetchingLocation = false;
-          _locationStatusMessage = 'Location permission permanently denied. Open App Settings.';
         });
         if (!quiet && mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: const Text('Location permission is permanently denied.'),
               action: SnackBarAction(
-                label: 'APP SETTINGS',
+                label: 'SETTINGS',
                 onPressed: () => Geolocator.openAppSettings(),
               ),
             ),
@@ -167,8 +163,6 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
         setState(() {
           _currentLocation = LatLng(pos!.latitude, pos.longitude);
           _isFetchingLocation = false;
-          _locationStatusMessage =
-              'GPS Active (${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)})';
         });
         if (!quiet) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -181,45 +175,23 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
       } else if (mounted) {
         setState(() {
           _isFetchingLocation = false;
-          _locationStatusMessage = 'GPS signal searching... Tap map or recenter button to try again.';
         });
-        if (!quiet) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Unable to acquire GPS signal. Try outdoors or tap map.')),
-          );
-        }
       }
     } on MissingPluginException {
       if (mounted) {
         setState(() {
           _isFetchingLocation = false;
-          _locationStatusMessage =
-              'App Restart Required: Please stop & re-run the app (flutter run) to link native GPS plugins.';
         });
-        if (!quiet) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Please stop and re-run the app (flutter run) to compile native GPS plugin.'),
-              backgroundColor: Colors.red,
-              duration: Duration(seconds: 5),
-            ),
-          );
-        }
       }
     } catch (e) {
       if (mounted) {
         setState(() {
           _isFetchingLocation = false;
-          _locationStatusMessage = 'Location error: $e';
         });
-        if (!quiet) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Location error: $e')),
-          );
-        }
       }
     }
   }
+
 
   void _showAddBikeDialog() {
     final bikeNameController = TextEditingController();
@@ -321,6 +293,106 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
     );
   }
 
+  void _showBikeSettingsSheet(List<Vehicle> vehicles) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return StatefulBuilder(
+          builder: (sheetContext, setSheetState) {
+            return Padding(
+              padding: const EdgeInsets.all(20.0),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Bike & Fuel Rates', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                      IconButton(
+                        icon: const Icon(Icons.add_circle, color: Colors.blue),
+                        onPressed: () {
+                          Navigator.of(sheetContext).pop();
+                          _showAddBikeDialog();
+                        },
+                      ),
+                    ],
+                  ),
+                  const Divider(),
+                  DropdownButtonFormField<String>(
+                    initialValue: _selectedVehicleId,
+                    decoration: const InputDecoration(
+
+                      labelText: 'Select Bike',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.two_wheeler),
+                    ),
+                    items: vehicles.map((v) {
+                      return DropdownMenuItem(
+                        value: v.id,
+                        child: Text('${v.name} (${v.mileage.toStringAsFixed(0)} km/L)'),
+                      );
+                    }).toList(),
+                    onChanged: (val) {
+                      if (val != null) {
+                        final bike = vehicles.firstWhere((v) => v.id == val);
+                        setState(() {
+                          _selectedVehicleId = val;
+                          _mileageController.text = bike.mileage.toString();
+                          _fuelPriceController.text = bike.defaultFuelPrice.toString();
+                        });
+                        setSheetState(() {});
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextFormField(
+                          controller: _mileageController,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: const InputDecoration(
+                            labelText: 'Avg Mileage (km/L)',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.speed),
+                          ),
+                          onChanged: (_) => setState(() {}),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextFormField(
+                          controller: _fuelPriceController,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: const InputDecoration(
+                            labelText: "Petrol Rate (₹/L)",
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.local_gas_station),
+                          ),
+                          onChanged: (_) => setState(() {}),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: () => Navigator.of(sheetContext).pop(),
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6366F1), foregroundColor: Colors.white),
+                    child: const Text('Done'),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Future<void> _startGpsTracking() async {
     if (_currentLocation == null) {
       await _requestCurrentLocation(quiet: false);
@@ -348,7 +420,7 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
 
       const locationSettings = LocationSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 2, // Trigger update when moved 2 meters
+        distanceFilter: 2,
       );
 
       _positionStreamSub?.cancel();
@@ -404,11 +476,10 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
   }
 
   Future<void> _saveRide(List<Vehicle> vehicles, List<Friend> friends) async {
-    // 1. Validate Form Fields (Ride Name, Mileage, Petrol Price)
     if (!_formKey.currentState!.validate()) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Please fill out all required fields marked in red.'),
+          content: const Text('Please fill out required fields.'),
           backgroundColor: Colors.orange.shade800,
         ),
       );
@@ -428,7 +499,6 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
       ),
     );
 
-    // 2. Resolve Effective Distance across GPS or Manual Map / Text Entry
     double rawKm = 0.0;
     if (_trackingMode == 'GPS' && _gpsDistanceKm > 0) {
       rawKm = _gpsDistanceKm;
@@ -439,15 +509,13 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
       }
     }
 
-    // Multiply by 2 if Round-Trip / Return Trip selected
     final totalDistanceKm = _isRoundTrip ? (rawKm * 2) : rawKm;
 
     if (totalDistanceKm <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Distance is 0.0 km. Please tap points on the map, enter distance, or start Live GPS tracking.'),
+          content: const Text('Distance is 0.0 km. Please tap points on map, enter distance, or start Live GPS.'),
           backgroundColor: Colors.orange.shade900,
-          duration: const Duration(seconds: 4),
           action: SnackBarAction(
             label: 'MANUAL MAP',
             textColor: Colors.white,
@@ -460,7 +528,6 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
       return;
     }
 
-    // 3. Ensure Participants Selected
     if (_selectedParticipantIds.isEmpty) {
       _selectedParticipantIds.add('ME');
     }
@@ -518,7 +585,6 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
     }
   }
 
-
   void _updateManualDistanceDisplay() {
     final effectiveKm = _isRoundTrip ? (_rawOneWayDistanceKm * 2) : _rawOneWayDistanceKm;
     _manualDistanceController.text = effectiveKm.toStringAsFixed(2);
@@ -529,13 +595,22 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
     final vehicles = ref.watch(vehicleListProvider);
     final friends = ref.watch(friendListProvider);
 
-    // Auto-select Default Bike on screen load
     if (_selectedVehicleId == null && vehicles.isNotEmpty) {
       final defaultBike = vehicles.firstWhere((v) => v.isDefault, orElse: () => vehicles.first);
       _selectedVehicleId = defaultBike.id;
       _mileageController.text = defaultBike.mileage.toString();
       _fuelPriceController.text = defaultBike.defaultFuelPrice.toString();
     }
+
+    final selectedBike = vehicles.firstWhere(
+      (v) => v.id == _selectedVehicleId,
+      orElse: () => Vehicle(
+        id: 'default',
+        name: 'Default Bike',
+        mileage: double.tryParse(_mileageController.text) ?? 45.0,
+        defaultFuelPrice: double.tryParse(_fuelPriceController.text) ?? 100.0,
+      ),
+    );
 
     final effectiveDistanceKm = _trackingMode == 'GPS'
         ? (_isRoundTrip ? _gpsDistanceKm * 2 : _gpsDistanceKm)
@@ -553,158 +628,101 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                   )
                 : const Icon(Icons.my_location),
-            tooltip: 'Get Current Location',
+            tooltip: 'Recenter GPS',
             onPressed: () => _requestCurrentLocation(quiet: false),
           ),
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.symmetric(horizontal: 14.0, vertical: 10.0),
         child: Form(
           key: _formKey,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Bike Selector & Quick Add Button
-              Row(
-                children: [
-                  Expanded(
-                    child: DropdownButtonFormField<String>(
-                      initialValue: _selectedVehicleId,
-                      decoration: const InputDecoration(
-                        labelText: 'Select Bike',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.two_wheeler),
-                      ),
-                      items: vehicles.map((v) {
-                        return DropdownMenuItem(
-                          value: v.id,
-                          child: Text('${v.name} (${v.mileage.toStringAsFixed(0)} km/L)'),
-                        );
-                      }).toList(),
-                      onChanged: (val) {
-                        if (val != null) {
-                          final bike = vehicles.firstWhere((v) => v.id == val);
-                          setState(() {
-                            _selectedVehicleId = val;
-                            _mileageController.text = bike.mileage.toString();
-                            _fuelPriceController.text = bike.defaultFuelPrice.toString();
-                          });
-                        }
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton.filledTonal(
-                    onPressed: _showAddBikeDialog,
-                    icon: const Icon(Icons.add),
-                    tooltip: 'Add New Bike',
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-
-              // Ride Title / Destination Name
+              // Ride Name Input Field
               TextFormField(
                 controller: _nameController,
+                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                 decoration: const InputDecoration(
                   labelText: 'Ride Name / Destination',
+                  hintText: 'e.g. Office Commute, Lonavala Trip',
                   border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.location_on),
+                  prefixIcon: Icon(Icons.location_on, color: Color(0xFF6366F1)),
+                  isDense: true,
                 ),
                 validator: (val) => val == null || val.trim().isEmpty ? 'Enter ride name' : null,
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 10),
 
-              // Trip Type (One-Way vs Return Trip)
-              Row(
-                children: [
-                  Expanded(
-                    child: SegmentedButton<bool>(
-                      segments: const [
-                        ButtonSegment(
-                          value: false,
-                          label: Text('One-Way'),
-                          icon: Icon(Icons.arrow_forward),
+              // Compact Feature Control Chips (Bike Info + Return Trip + Mode Toggle)
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    // Bike Info Chip
+                    ActionChip(
+                      avatar: const Icon(Icons.two_wheeler, size: 16, color: Color(0xFF6366F1)),
+                      label: Text(
+                        '${selectedBike.name} (${_mileageController.text}km/L • ₹${_fuelPriceController.text}/L)',
+                        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                      ),
+                      onPressed: () => _showBikeSettingsSheet(vehicles),
+                      backgroundColor: Colors.blue.withValues(alpha: 0.1),
+                    ),
+                    const SizedBox(width: 6),
+
+                    // Return Trip Chip
+                    FilterChip(
+                      selected: _isRoundTrip,
+                      avatar: Icon(Icons.sync, size: 14, color: _isRoundTrip ? Colors.white : Colors.purple),
+                      label: Text(
+                        _isRoundTrip ? 'Return (2x)' : 'One-Way',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: _isRoundTrip ? Colors.white : Colors.black87,
+                          fontWeight: FontWeight.bold,
                         ),
-                        ButtonSegment(
-                          value: true,
-                          label: Text('Return Trip (2x)'),
-                          icon: Icon(Icons.sync),
-                        ),
-                      ],
-                      selected: {_isRoundTrip},
-                      onSelectionChanged: (set) {
+                      ),
+                      selectedColor: Colors.purple.shade700,
+                      onSelected: (val) {
                         setState(() {
-                          _isRoundTrip = set.first;
+                          _isRoundTrip = val;
                           _updateManualDistanceDisplay();
                         });
                       },
                     ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
+                    const SizedBox(width: 6),
 
-              // Mileage & Today's Petrol Rate Setup
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      controller: _mileageController,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      decoration: const InputDecoration(
-                        labelText: 'Bike Avg (km/L)',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.speed),
+                    // Tracking Mode Chip
+                    FilterChip(
+                      selected: _trackingMode == 'GPS',
+                      avatar: Icon(
+                        _trackingMode == 'GPS' ? Icons.gps_fixed : Icons.map,
+                        size: 14,
+                        color: _trackingMode == 'GPS' ? Colors.white : Colors.blue,
                       ),
-                      validator: (val) {
-                        if (val == null || val.trim().isEmpty) return 'Enter average';
-                        final numVal = double.tryParse(val.trim());
-                        if (numVal == null || numVal <= 0) return 'Valid > 0';
-                        return null;
+                      label: Text(
+                        _trackingMode == 'GPS' ? 'Live GPS' : 'Manual Map',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: _trackingMode == 'GPS' ? Colors.white : Colors.black87,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      selectedColor: const Color(0xFF10B981),
+                      onSelected: (val) {
+                        setState(() {
+                          _trackingMode = val ? 'GPS' : 'Manual';
+                        });
                       },
                     ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _fuelPriceController,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      decoration: const InputDecoration(
-                        labelText: "Today's Petrol Rate (₹/L)",
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.local_gas_station),
-                      ),
-                      validator: (val) {
-                        if (val == null || val.trim().isEmpty) return 'Enter rate';
-                        final numVal = double.tryParse(val.trim());
-                        if (numVal == null || numVal <= 0) return 'Valid > 0';
-                        return null;
-                      },
-                    ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 10),
 
-              // Tracking Mode Selector
-              const Text(
-                'Tracking Mode',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
-              ),
-              const SizedBox(height: 8),
-              SegmentedButton<String>(
-                segments: const [
-                  ButtonSegment(value: 'GPS', label: Text('Live GPS Track'), icon: Icon(Icons.gps_fixed)),
-                  ButtonSegment(value: 'Manual', label: Text('Multi-Stop Map / Entry'), icon: Icon(Icons.map)),
-                ],
-                selected: {_trackingMode},
-                onSelectionChanged: (set) => setState(() => _trackingMode = set.first),
-              ),
-              const SizedBox(height: 16),
-
-              // Interactive Multi-Stop OpenStreetMap Widget
+              // Interactive Multi-Stop Map Widget
               RealRouteMapWidget(
                 routePoints: _gpsRoutePoints,
                 currentDistanceKm: effectiveDistanceKm,
@@ -731,164 +749,52 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
               ),
               const SizedBox(height: 8),
 
-              // GPS Diagnostic Banner
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: _currentLocation != null
-                      ? Colors.green.shade50
-                      : (_locationServiceEnabled ? Colors.amber.shade50 : Colors.red.shade50),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: _currentLocation != null
-                        ? Colors.green.shade300
-                        : (_locationServiceEnabled ? Colors.amber.shade300 : Colors.red.shade300),
-                  ),
-                ),
-                child: Column(
-                  children: [
-                    Row(
-                      children: [
-                        Icon(
-                          _currentLocation != null
-                              ? Icons.check_circle
-                              : (_locationServiceEnabled ? Icons.location_searching : Icons.location_off),
-                          color: _currentLocation != null
-                              ? Colors.green.shade800
-                              : (_locationServiceEnabled ? Colors.amber.shade900 : Colors.red.shade800),
-                          size: 18,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            _locationStatusMessage,
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                              color: _currentLocation != null
-                                  ? Colors.green.shade900
-                                  : (_locationServiceEnabled ? Colors.amber.shade900 : Colors.red.shade900),
-                            ),
-                          ),
-                        ),
-                        TextButton(
-                          onPressed: () => _requestCurrentLocation(quiet: false),
-                          style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
-                          child: const Text('REFRESH GPS'),
-                        ),
-                      ],
+              // Mode Action Banner
+              if (_trackingMode == 'GPS') ...[
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: _isTracking ? Colors.green.shade50 : Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: _isTracking ? Colors.green.shade300 : Colors.blue.shade300,
                     ),
-                    if (!_locationServiceEnabled ||
-                        (_locationPermission != LocationPermission.always &&
-                            _locationPermission != LocationPermission.whileInUse)) ...[
-                      const Divider(height: 12),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          if (!_locationServiceEnabled)
-                            OutlinedButton.icon(
-                              onPressed: () => Geolocator.openLocationSettings(),
-                              icon: const Icon(Icons.settings, size: 14),
-                              label: const Text('Turn On GPS', style: TextStyle(fontSize: 11)),
-                              style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              '${effectiveDistanceKm.toStringAsFixed(2)} km',
+                              style: TextStyle(
+                                fontSize: 22,
+                                fontWeight: FontWeight.bold,
+                                color: _isTracking ? Colors.green.shade900 : Colors.blue.shade900,
+                              ),
                             ),
-                          OutlinedButton.icon(
-                            onPressed: () => Geolocator.openAppSettings(),
-                            icon: const Icon(Icons.security, size: 14),
-                            label: const Text('App Permissions', style: TextStyle(fontSize: 11)),
-                            style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
-                          ),
-                        ],
+                            Text(
+                              _isTracking
+                                  ? 'Tracking Live GPS...'
+                                  : (_currentLocation != null ? 'GPS Fix Acquired' : 'GPS Standby'),
+                              style: const TextStyle(fontSize: 11, color: Colors.grey),
+                            ),
+                          ],
+                        ),
+                      ),
+                      ElevatedButton.icon(
+                        onPressed: _isTracking ? _stopGpsTracking : _startGpsTracking,
+                        icon: Icon(_isTracking ? Icons.stop : Icons.play_arrow, size: 16),
+                        label: Text(_isTracking ? 'Stop' : 'Start GPS'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _isTracking ? Colors.red : Colors.green.shade700,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          visualDensity: VisualDensity.compact,
+                        ),
                       ),
                     ],
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-
-              // Quick Location Helper for Manual Map Mode
-              if (_trackingMode == 'Manual') ...[
-                OutlinedButton.icon(
-                  onPressed: () async {
-                    if (_currentLocation == null) {
-                      await _requestCurrentLocation(quiet: false);
-                    }
-                    if (_currentLocation != null) {
-                      setState(() {
-                        if (_manualWaypoints.isEmpty) {
-                          _manualWaypoints.add(_currentLocation!);
-                        } else {
-                          _manualWaypoints[0] = _currentLocation!;
-                        }
-                      });
-
-                      if (_manualWaypoints.length >= 2) {
-                        final routingService = RoadRoutingService();
-                        final result = await routingService.getMultiStopRoadRoute(_manualWaypoints);
-                        if (mounted) {
-                          setState(() {
-                            _manualRoadPolyline = result.polylinePoints;
-                            _rawOneWayDistanceKm = result.distanceKm;
-                            _updateManualDistanceDisplay();
-                          });
-                        }
-                      }
-                    }
-                  },
-                  icon: const Icon(Icons.my_location, size: 18),
-                  label: const Text('Use Current Location as Start Point'),
-                ),
-                const SizedBox(height: 12),
-              ],
-
-              // Mode-specific Controls
-              if (_trackingMode == 'GPS') ...[
-                Card(
-                  color: _isTracking ? Colors.green.shade50 : Colors.blue.shade50,
-                  elevation: 2,
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      children: [
-                        Text(
-                          '${effectiveDistanceKm.toStringAsFixed(2)} km',
-                          style: TextStyle(
-                            fontSize: 34,
-                            fontWeight: FontWeight.bold,
-                            color: _isTracking ? Colors.green.shade800 : Colors.blue.shade900,
-                          ),
-                        ),
-                        if (_isRoundTrip) ...[
-                          const SizedBox(height: 4),
-                          Chip(
-                            avatar: const Icon(Icons.sync, size: 14, color: Colors.white),
-                            label: Text('Return Trip Included (${_gpsDistanceKm.toStringAsFixed(2)} km x 2)'),
-                            backgroundColor: Colors.blue.shade800,
-                            labelStyle: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
-                          ),
-                        ],
-                        const SizedBox(height: 6),
-                        Text(
-                          _isTracking
-                              ? 'Tracking real-time GPS movement...'
-                              : (_currentLocation != null
-                                  ? 'GPS Ready (${_currentLocation!.latitude.toStringAsFixed(4)}, ${_currentLocation!.longitude.toStringAsFixed(4)})'
-                                  : 'GPS Searching - Standby'),
-                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
-                        ),
-                        const SizedBox(height: 14),
-                        ElevatedButton.icon(
-                          onPressed: _isTracking ? _stopGpsTracking : _startGpsTracking,
-                          icon: Icon(_isTracking ? Icons.stop : Icons.play_arrow),
-                          label: Text(_isTracking ? 'Stop Ride' : 'Start Live GPS Ride'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: _isTracking ? Colors.red : Colors.green.shade700,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                          ),
-                        ),
-                      ],
-                    ),
                   ),
                 ),
               ] else ...[
@@ -897,89 +803,83 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   decoration: InputDecoration(
                     labelText: 'Total Distance (km)',
-                    hintText: 'Tap multiple stops on map or enter manually',
+                    hintText: 'Tap stops on map or enter km',
                     border: const OutlineInputBorder(),
                     prefixIcon: const Icon(Icons.straighten),
-                    suffixText: _isRoundTrip ? 'km (Round Trip)' : 'km',
+                    suffixText: _isRoundTrip ? 'km (2x Return)' : 'km',
+                    isDense: true,
                   ),
-                  onChanged: (val) {
-                    setState(() {});
-                  },
-                  validator: (val) {
-                    if (_trackingMode == 'Manual') {
-                      if (val == null || val.trim().isEmpty) return 'Enter or select distance on map';
-                      final numVal = double.tryParse(val.trim());
-                      if (numVal == null || numVal <= 0) return 'Enter valid distance';
-                    }
-                    return null;
-                  },
+                  onChanged: (val) => setState(() {}),
                 ),
               ],
-              const SizedBox(height: 24),
+              const SizedBox(height: 12),
 
-              // Participants & Split Section
-              const Text(
-                'Split with Friends',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              // Split Section (Compact Horizontal Chips)
+              Card(
+                margin: EdgeInsets.zero,
+                elevation: 1,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                child: Padding(
+                  padding: const EdgeInsets.all(12.0),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Split Expenses With',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                          ),
+                          Text(
+                            'Paid by: ${_paidBy == 'ME' ? 'Me' : friends.firstWhere((f) => f.id == _paidBy, orElse: () => friends.first).name}',
+                            style: const TextStyle(fontSize: 11, color: Color(0xFF6366F1), fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          FilterChip(
+                            label: const Text('Me', style: TextStyle(fontSize: 12)),
+                            selected: _selectedParticipantIds.contains('ME'),
+                            onSelected: (val) {
+                              setState(() {
+                                if (val) {
+                                  _selectedParticipantIds.add('ME');
+                                } else if (_selectedParticipantIds.length > 1) {
+                                  _selectedParticipantIds.remove('ME');
+                                }
+                              });
+                            },
+                          ),
+                          ...friends.map((f) {
+                            final isSel = _selectedParticipantIds.contains(f.id);
+                            return FilterChip(
+                              label: Text(f.name, style: const TextStyle(fontSize: 12)),
+                              selected: isSel,
+                              onSelected: (val) {
+                                setState(() {
+                                  if (val) {
+                                    _selectedParticipantIds.add(f.id);
+                                  } else if (_selectedParticipantIds.length > 1) {
+                                    _selectedParticipantIds.remove(f.id);
+                                  }
+                                });
+                              },
+                            );
+                          }),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
               ),
-              const SizedBox(height: 8),
-              CheckboxListTile(
-                title: const Text('Include Me'),
-                value: _selectedParticipantIds.contains('ME'),
-                onChanged: (val) {
-                  setState(() {
-                    if (val == true) {
-                      _selectedParticipantIds.add('ME');
-                    } else {
-                      if (_selectedParticipantIds.length > 1) {
-                        _selectedParticipantIds.remove('ME');
-                      }
-                    }
-                  });
-                },
-              ),
-              ...friends.map((f) {
-                return CheckboxListTile(
-                  title: Text(f.name),
-                  value: _selectedParticipantIds.contains(f.id),
-                  onChanged: (val) {
-                    setState(() {
-                      if (val == true) {
-                        _selectedParticipantIds.add(f.id);
-                      } else {
-                        if (_selectedParticipantIds.length > 1) {
-                          _selectedParticipantIds.remove(f.id);
-                        }
-                      }
-                    });
-                  },
-                );
-              }),
               const SizedBox(height: 16),
 
-              // Paid By Selector
-              const Text(
-                'Paid By',
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              DropdownButtonFormField<String>(
-                initialValue: _paidBy,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.payment),
-                ),
-                items: [
-                  const DropdownMenuItem(value: 'ME', child: Text('Me (User)')),
-                  ...friends
-                      .where((f) => _selectedParticipantIds.contains(f.id))
-                      .map((f) => DropdownMenuItem(value: f.id, child: Text(f.name))),
-                ],
-                onChanged: (val) => setState(() => _paidBy = val ?? 'ME'),
-              ),
-              const SizedBox(height: 24),
-
-              // Save Button
+              // Save & Calculate Button
               GradientButton(
                 text: 'Save & Calculate Ride',
                 icon: Icons.check_circle,
