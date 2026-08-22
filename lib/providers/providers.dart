@@ -14,7 +14,10 @@ import '../services/fuel_calculation_service.dart';
 import '../services/ledger_service.dart';
 import '../services/split_calculation_service.dart';
 
+import '../services/upi_payment_service.dart';
+
 // Database Provider
+
 final databaseProvider = Provider<AppDatabaseInterface>((ref) {
   throw UnimplementedError('Database provider must be overridden in main with initialized db');
 });
@@ -60,6 +63,11 @@ final ledgerServiceProvider = Provider<LedgerService>((ref) {
 final exportServiceProvider = Provider<ExportService>((ref) {
   return ExportService();
 });
+
+final upiPaymentServiceProvider = Provider<UpiPaymentService>((ref) {
+  return UpiPaymentService();
+});
+
 
 // Vehicles / Bikes Notifier
 class VehicleListNotifier extends StateNotifier<List<Vehicle>> {

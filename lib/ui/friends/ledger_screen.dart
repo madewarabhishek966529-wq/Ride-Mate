@@ -6,9 +6,85 @@ import '../../domain/models/friend.dart';
 import '../../domain/models/settlement_record.dart';
 import '../../providers/providers.dart';
 import '../../services/ledger_service.dart';
+import '../widgets/gradient_button.dart';
 
 class LedgerScreen extends ConsumerWidget {
   const LedgerScreen({super.key});
+
+  void _showUpiPaymentDialog(BuildContext context, WidgetRef ref, Friend friend, double amount) {
+    final upiController = TextEditingController(text: '${friend.name.toLowerCase().replaceAll(' ', '')}@okaxis');
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              const Icon(Icons.payment, color: Color(0xFF6366F1)),
+              const SizedBox(width: 8),
+              Expanded(child: Text('Pay ${friend.name} via UPI')),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Amount to Pay: ₹${amount.abs().toStringAsFixed(2)}',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: upiController,
+                decoration: const InputDecoration(
+                  labelText: "Receiver's UPI ID",
+                  hintText: 'e.g. rahul@upi or 9876543210@paytm',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.account_balance),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () async {
+                final upiId = upiController.text.trim();
+                if (upiId.isEmpty) return;
+
+                final upiService = ref.read(upiPaymentServiceProvider);
+                final launched = await upiService.launchUpiPayment(
+                  upiId: upiId,
+                  payeeName: friend.name,
+                  amount: amount.abs(),
+                  note: 'RideMate Settlement - ${friend.name}',
+                );
+
+                if (dialogContext.mounted) {
+                  Navigator.of(dialogContext).pop();
+                  if (!launched) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('UPI payment link opened for $upiId (₹${amount.abs().toStringAsFixed(2)})'),
+                      ),
+                    );
+                  }
+                }
+              },
+              icon: const Icon(Icons.open_in_new),
+              label: const Text('Launch UPI App'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF6366F1),
+                foregroundColor: Colors.white,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
 
   void _showItemizedBreakdown(
     BuildContext context,
@@ -16,6 +92,9 @@ class LedgerScreen extends ConsumerWidget {
     Friend friend,
     FriendLedgerSummary summary,
   ) {
+    final rides = ref.read(rideListProvider);
+    final friendRides = rides.where((r) => r.participantIds.contains(friend.id)).toList();
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -25,8 +104,8 @@ class LedgerScreen extends ConsumerWidget {
       builder: (context) {
         return DraggableScrollableSheet(
           expand: false,
-          initialChildSize: 0.6,
-          maxChildSize: 0.9,
+          initialChildSize: 0.7,
+          maxChildSize: 0.95,
           builder: (context, scrollController) {
             return Padding(
               padding: const EdgeInsets.all(16.0),
@@ -44,11 +123,28 @@ class LedgerScreen extends ConsumerWidget {
                     ),
                   ),
                   const SizedBox(height: 16),
-                  Text(
-                    'Ledger: ${friend.name}',
-                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.bold,
-                        ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Ledger: ${friend.name}',
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.share, color: Color(0xFF6366F1)),
+                        tooltip: 'Share on WhatsApp',
+                        onPressed: () {
+                          ref.read(upiPaymentServiceProvider).shareSettlementSummary(
+                                friendName: friend.name,
+                                summary: summary,
+                                friendRides: friendRides,
+                                upiId: '${friend.name.toLowerCase().replaceAll(' ', '')}@okaxis',
+                              );
+                        },
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 4),
                   Text(
@@ -107,38 +203,46 @@ class LedgerScreen extends ConsumerWidget {
                             },
                           ),
                   ),
-                  if (summary.netBalance != 0)
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: () async {
-                          final record = SettlementRecord(
-                            id: const Uuid().v4(),
-                            friendId: friend.id,
-                            amount: summary.netBalance,
-                            date: DateTime.now(),
-                          );
-                          await ref
-                              .read(settlementListProvider.notifier)
-                              .addSettlement(record);
-                          if (context.mounted) {
-                            Navigator.of(context).pop();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text('Marked ${friend.name} as Settled!'),
-                              ),
-                            );
-                          }
-                        },
-                        icon: const Icon(Icons.check_circle),
-                        label: const Text('Mark as Settled'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
+                  const SizedBox(height: 12),
+                  if (summary.netBalance != 0) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () => _showUpiPaymentDialog(context, ref, friend, summary.netBalance),
+                            icon: const Icon(Icons.payment),
+                            label: const Text('Pay via UPI'),
+                          ),
                         ),
-                      ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: GradientButton(
+                            text: 'Mark Settled',
+                            icon: Icons.check_circle,
+                            gradientColors: const [Color(0xFF10B981), Color(0xFF059669)],
+                            height: 42,
+                            onPressed: () async {
+                              final record = SettlementRecord(
+                                id: const Uuid().v4(),
+                                friendId: friend.id,
+                                amount: summary.netBalance,
+                                date: DateTime.now(),
+                              );
+                              await ref.read(settlementListProvider.notifier).addSettlement(record);
+                              if (context.mounted) {
+                                Navigator.of(context).pop();
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text('Marked ${friend.name} as Settled!'),
+                                  ),
+                                );
+                              }
+                            },
+                          ),
+                        ),
+                      ],
                     ),
+                  ],
                 ],
               ),
             );
@@ -151,6 +255,7 @@ class LedgerScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final friends = ref.watch(friendListProvider);
+    final rides = ref.watch(rideListProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -170,6 +275,7 @@ class LedgerScreen extends ConsumerWidget {
               itemBuilder: (context, index) {
                 final friend = friends[index];
                 final summary = ref.watch(friendLedgerProvider(friend.id));
+                final friendRides = rides.where((r) => r.participantIds.contains(friend.id)).toList();
 
                 String balanceText;
                 Color balanceColor;
@@ -190,9 +296,15 @@ class LedgerScreen extends ConsumerWidget {
 
                 return Card(
                   margin: const EdgeInsets.symmetric(vertical: 6),
+                  elevation: 2,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                   child: ListTile(
                     leading: CircleAvatar(
-                      child: Text(friend.name.isNotEmpty ? friend.name[0].toUpperCase() : '?'),
+                      backgroundColor: const Color(0xFF6366F1).withValues(alpha: 0.15),
+                      child: Text(
+                        friend.name.isNotEmpty ? friend.name[0].toUpperCase() : '?',
+                        style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF6366F1)),
+                      ),
                     ),
                     title: Text(
                       friend.name,
@@ -210,29 +322,25 @@ class LedgerScreen extends ConsumerWidget {
                     trailing: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        if (summary.netBalance != 0)
+                        if (summary.netBalance != 0) ...[
                           IconButton(
-                            icon: const Icon(Icons.check_circle_outline, color: Colors.green),
-                            tooltip: 'Mark as Settled',
-                            onPressed: () async {
-                              final record = SettlementRecord(
-                                id: const Uuid().v4(),
-                                friendId: friend.id,
-                                amount: summary.netBalance,
-                                date: DateTime.now(),
-                              );
-                              await ref
-                                  .read(settlementListProvider.notifier)
-                                  .addSettlement(record);
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text('Marked ${friend.name} as Settled!'),
-                                  ),
-                                );
-                              }
+                            icon: const Icon(Icons.payment, color: Color(0xFF6366F1), size: 20),
+                            tooltip: 'Pay via UPI',
+                            onPressed: () => _showUpiPaymentDialog(context, ref, friend, summary.netBalance),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.share, color: Colors.green, size: 20),
+                            tooltip: 'Share on WhatsApp',
+                            onPressed: () {
+                              ref.read(upiPaymentServiceProvider).shareSettlementSummary(
+                                    friendName: friend.name,
+                                    summary: summary,
+                                    friendRides: friendRides,
+                                    upiId: '${friend.name.toLowerCase().replaceAll(' ', '')}@okaxis',
+                                  );
                             },
                           ),
+                        ],
                         const Icon(Icons.chevron_right),
                       ],
                     ),
