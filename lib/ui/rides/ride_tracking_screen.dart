@@ -1,12 +1,13 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:uuid/uuid.dart';
 import '../../domain/models/friend.dart';
 import '../../domain/models/ride.dart';
-import '../../domain/models/vehicle.dart';
 import '../../providers/providers.dart';
-
-import '../widgets/travel_route_map_widget.dart';
+import '../widgets/real_route_map_widget.dart';
 
 class RideTrackingScreen extends ConsumerStatefulWidget {
   const RideTrackingScreen({super.key});
@@ -17,61 +18,280 @@ class RideTrackingScreen extends ConsumerStatefulWidget {
 
 class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _nameController = TextEditingController(text: 'Afternoon Ride');
+  final _nameController = TextEditingController(text: 'Ride');
   final _manualDistanceController = TextEditingController();
+  final _mileageController = TextEditingController(text: '45.0');
+  final _fuelPriceController = TextEditingController(text: '100.0');
 
-  String? _selectedVehicleId;
   String _trackingMode = 'GPS'; // 'GPS' or 'Manual'
   String _paidBy = 'ME'; // 'ME' or friendId
   final Set<String> _selectedParticipantIds = {'ME'}; // 'ME' + friend IDs
 
-  // Simulation of GPS tracking & Route Map
+  // Real GPS tracking state
   bool _isTracking = false;
   double _gpsDistanceKm = 0.0;
-  final List<RoutePoint> _gpsRoutePoints = [
-    RoutePoint(18.5204, 73.8567, label: 'Start'),
-    RoutePoint(18.5310, 73.8640),
-    RoutePoint(18.5420, 73.8750),
-    RoutePoint(18.5580, 73.8910, label: 'Current'),
-  ];
+  final List<LatLng> _gpsRoutePoints = [];
+  StreamSubscription<Position>? _positionStreamSub;
+  LatLng? _currentLocation;
+
+  // Diagnostic location state
+  bool _isFetchingLocation = false;
+  String _locationStatusMessage = 'Checking GPS...';
+  bool _locationServiceEnabled = true;
+  LocationPermission _locationPermission = LocationPermission.denied;
+
+  // Manual Map selection state
+  LatLng? _manualStartPoint;
+  LatLng? _manualEndPoint;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkInitialLocation();
+  }
 
   @override
   void dispose() {
+    _positionStreamSub?.cancel();
     _nameController.dispose();
     _manualDistanceController.dispose();
+    _mileageController.dispose();
+    _fuelPriceController.dispose();
     super.dispose();
   }
 
-  void _startGpsTracking() {
+  Future<void> _checkInitialLocation() async {
+    await _requestCurrentLocation(quiet: true);
+  }
+
+  /// Multi-tier robust location fetch strategy (Last Known -> High Acc -> Medium Acc -> Low Acc)
+  Future<void> _requestCurrentLocation({bool quiet = false}) async {
+    if (!mounted) return;
     setState(() {
-      _isTracking = true;
-      _gpsDistanceKm = 0.0;
-      _gpsRoutePoints.clear();
-      _gpsRoutePoints.add(RoutePoint(18.5204, 73.8567, label: 'Start'));
+      _isFetchingLocation = true;
+      _locationStatusMessage = 'Requesting GPS location...';
     });
+
+    try {
+      // 1. Check Location Service Status
+      _locationServiceEnabled = await Geolocator.isLocationServiceEnabled();
+      if (!_locationServiceEnabled) {
+        setState(() {
+          _isFetchingLocation = false;
+          _locationStatusMessage = 'GPS / Location services disabled on device.';
+        });
+        if (!quiet && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('GPS is turned off. Tap "Open Settings" to turn on location.'),
+              backgroundColor: Colors.orange.shade800,
+              action: SnackBarAction(
+                label: 'SETTINGS',
+                textColor: Colors.white,
+                onPressed: () => Geolocator.openLocationSettings(),
+              ),
+            ),
+          );
+        }
+        return;
+      }
+
+      // 2. Check & Request Permissions
+      _locationPermission = await Geolocator.checkPermission();
+      if (_locationPermission == LocationPermission.denied) {
+        _locationPermission = await Geolocator.requestPermission();
+      }
+
+      if (_locationPermission == LocationPermission.denied) {
+        setState(() {
+          _isFetchingLocation = false;
+          _locationStatusMessage = 'Location permission denied by user.';
+        });
+        if (!quiet && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Location permission denied.')),
+          );
+        }
+        return;
+      }
+
+      if (_locationPermission == LocationPermission.deniedForever) {
+        setState(() {
+          _isFetchingLocation = false;
+          _locationStatusMessage = 'Location permission permanently denied. Open App Settings.';
+        });
+        if (!quiet && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Location permission is permanently denied.'),
+              action: SnackBarAction(
+                label: 'APP SETTINGS',
+                onPressed: () => Geolocator.openAppSettings(),
+              ),
+            ),
+          );
+        }
+        return;
+      }
+
+      // 3. Tier 1: Try Last Known Position (Instant on mobile devices)
+      Position? pos = await Geolocator.getLastKnownPosition();
+
+      // 4. Tier 2: Try Current Position High/Medium Accuracy
+      if (pos == null) {
+        try {
+          pos = await Geolocator.getCurrentPosition(
+            locationSettings: const LocationSettings(
+              accuracy: LocationAccuracy.medium,
+              timeLimit: Duration(seconds: 6),
+            ),
+          );
+        } catch (_) {
+          // Tier 3: Fallback Low Accuracy
+          try {
+            pos = await Geolocator.getCurrentPosition(
+              locationSettings: const LocationSettings(
+                accuracy: LocationAccuracy.lowest,
+                timeLimit: Duration(seconds: 4),
+              ),
+            );
+          } catch (e) {
+            pos = null;
+          }
+        }
+      }
+
+      if (pos != null && mounted) {
+        setState(() {
+          _currentLocation = LatLng(pos!.latitude, pos.longitude);
+          _isFetchingLocation = false;
+          _locationStatusMessage =
+              'GPS Active (${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)})';
+        });
+        if (!quiet) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Location retrieved successfully!'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
+      } else if (mounted) {
+        setState(() {
+          _isFetchingLocation = false;
+          _locationStatusMessage = 'GPS signal searching... Tap map or recenter button to try again.';
+        });
+        if (!quiet) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Unable to acquire GPS signal. Try outdoors or tap map.')),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isFetchingLocation = false;
+          _locationStatusMessage = 'Location error: $e';
+        });
+        if (!quiet) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Location error: $e')),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _startGpsTracking() async {
+    // 1. Ensure location is available
+    if (_currentLocation == null) {
+      await _requestCurrentLocation(quiet: false);
+    }
+
+    if (_currentLocation == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Cannot start live tracking without GPS location fix.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+      return;
+    }
+
+    // 2. Start Real GPS Stream
+    try {
+      setState(() {
+        _isTracking = true;
+        _gpsDistanceKm = 0.0;
+        _gpsRoutePoints.clear();
+        _gpsRoutePoints.add(_currentLocation!);
+      });
+
+      const locationSettings = LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 2, // Trigger update when moved 2 meters
+      );
+
+      _positionStreamSub?.cancel();
+      _positionStreamSub = Geolocator.getPositionStream(locationSettings: locationSettings).listen(
+        (Position position) {
+          if (!mounted || !_isTracking) return;
+
+          final newLatLng = LatLng(position.latitude, position.longitude);
+
+          setState(() {
+            if (_gpsRoutePoints.isNotEmpty) {
+              final last = _gpsRoutePoints.last;
+              final metersMoved = Geolocator.distanceBetween(
+                last.latitude,
+                last.longitude,
+                newLatLng.latitude,
+                newLatLng.longitude,
+              );
+
+              // Accrue real distance if valid physical movement occurs (> 1.0m)
+              if (metersMoved > 1.0) {
+                _gpsDistanceKm += (metersMoved / 1000.0);
+                _gpsRoutePoints.add(newLatLng);
+              }
+            } else {
+              _gpsRoutePoints.add(newLatLng);
+            }
+            _currentLocation = newLatLng;
+          });
+        },
+        onError: (err) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('GPS Tracking Error: $err')),
+            );
+          }
+        },
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to start GPS stream: $e')),
+        );
+      }
+    }
   }
 
   void _stopGpsTracking() {
+    _positionStreamSub?.cancel();
+    _positionStreamSub = null;
     setState(() {
       _isTracking = false;
-      if (_gpsDistanceKm == 0.0) {
-        _gpsDistanceKm = 14.5;
-        _gpsRoutePoints.addAll([
-          RoutePoint(18.5310, 73.8640),
-          RoutePoint(18.5420, 73.8750),
-          RoutePoint(18.5580, 73.8910, label: 'Destination'),
-        ]);
-      }
     });
   }
 
-  Future<void> _saveRide(List<Vehicle> vehicles, List<Friend> friends) async {
+  Future<void> _saveRide(List<Friend> friends) async {
     if (!_formKey.currentState!.validate()) return;
 
-    final vehicle = vehicles.firstWhere(
-      (v) => v.id == _selectedVehicleId,
-      orElse: () => vehicles.first,
-    );
+    final mileage = double.tryParse(_mileageController.text.trim()) ?? 45.0;
+    final fuelPrice = double.tryParse(_fuelPriceController.text.trim()) ?? 100.0;
 
     final distanceKm = _trackingMode == 'GPS'
         ? _gpsDistanceKm
@@ -79,7 +299,9 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
 
     if (distanceKm <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Distance must be greater than 0 km')),
+        const SnackBar(
+          content: Text('Distance must be greater than 0 km. Please track movement or select distance on map.'),
+        ),
       );
       return;
     }
@@ -87,8 +309,8 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
     final fuelCalc = ref.read(fuelCalculationServiceProvider);
     final splitCalc = ref.read(splitCalculationServiceProvider);
 
-    final fuelUsed = fuelCalc.calculateFuelUsed(distanceKm, vehicle.mileage);
-    final fuelCost = fuelCalc.calculateFuelCost(fuelUsed, vehicle.defaultFuelPrice);
+    final fuelUsed = fuelCalc.calculateFuelUsed(distanceKm, mileage);
+    final fuelCost = fuelCalc.calculateFuelCost(fuelUsed, fuelPrice);
 
     final participantList = _selectedParticipantIds.toList();
     final shares = splitCalc.calculateEvenShares(fuelCost, participantList);
@@ -97,10 +319,10 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
       id: const Uuid().v4(),
       name: _nameController.text.trim(),
       date: DateTime.now(),
-      vehicleId: vehicle.id,
-      vehicleName: vehicle.name,
-      mileage: vehicle.mileage, // Snapshot
-      fuelPrice: vehicle.defaultFuelPrice, // Snapshot
+      vehicleId: 'default',
+      vehicleName: 'Vehicle (${mileage.toStringAsFixed(1)} km/L)',
+      mileage: mileage,
+      fuelPrice: fuelPrice,
       distanceKm: distanceKm,
       fuelUsedLiters: fuelUsed,
       totalFuelCost: fuelCost,
@@ -122,213 +344,369 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final vehicles = ref.watch(vehicleListProvider);
     final friends = ref.watch(friendListProvider);
-
-    if (_selectedVehicleId == null && vehicles.isNotEmpty) {
-      final def = vehicles.firstWhere((v) => v.isDefault, orElse: () => vehicles.first);
-      _selectedVehicleId = def.id;
-    }
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('Track & Split Ride'),
+        actions: [
+          IconButton(
+            icon: _isFetchingLocation
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                  )
+                : const Icon(Icons.my_location),
+            tooltip: 'Get Current Location',
+            onPressed: () => _requestCurrentLocation(quiet: false),
+          ),
+        ],
       ),
-      body: vehicles.isEmpty
-          ? const Center(
-              child: Text('Please add a vehicle first before tracking rides.'),
-            )
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16.0),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Ride Title
-                    TextFormField(
-                      controller: _nameController,
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Ride Title / Destination Name
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(
+                  labelText: 'Ride Name / Destination',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.location_on),
+                ),
+                validator: (val) => val == null || val.trim().isEmpty ? 'Enter ride name' : null,
+              ),
+              const SizedBox(height: 16),
+
+              // Mileage & Fuel Price Setup
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _mileageController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
                       decoration: const InputDecoration(
-                        labelText: 'Ride Name / Destination',
+                        labelText: 'Mileage (km/L)',
                         border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.location_on),
+                        prefixIcon: Icon(Icons.speed),
                       ),
-                      validator: (val) => val == null || val.trim().isEmpty ? 'Enter ride name' : null,
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Vehicle Selection
-                    DropdownButtonFormField<String>(
-                      initialValue: _selectedVehicleId,
-                      decoration: const InputDecoration(
-                        labelText: 'Vehicle',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.directions_car),
-                      ),
-                      items: vehicles.map((v) {
-                        return DropdownMenuItem(
-                          value: v.id,
-                          child: Text('${v.name} (${v.mileage} km/L)'),
-                        );
-                      }).toList(),
-                      onChanged: (val) => setState(() => _selectedVehicleId = val),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Tracking Mode Selector
-                    const Text(
-                      'Tracking Mode',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8),
-                    SegmentedButton<String>(
-                      segments: const [
-                        ButtonSegment(value: 'GPS', label: Text('GPS Track'), icon: Icon(Icons.gps_fixed)),
-                        ButtonSegment(value: 'Manual', label: Text('Manual Entry'), icon: Icon(Icons.edit)),
-                      ],
-                      selected: {_trackingMode},
-                      onSelectionChanged: (set) => setState(() => _trackingMode = set.first),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // GPS Mode UI & Travel Map Section
-                    if (_trackingMode == 'GPS') ...[
-                      TravelRouteMapWidget(
-                        routePoints: _gpsRoutePoints,
-                        currentDistanceKm: _gpsDistanceKm,
-                        isLiveTracking: _isTracking,
-                      ),
-                      const SizedBox(height: 12),
-                      Card(
-                        color: _isTracking ? Colors.green.shade50 : Colors.blue.shade50,
-                        child: Padding(
-                          padding: const EdgeInsets.all(16.0),
-                          child: Column(
-                            children: [
-                              Text(
-                                '${_gpsDistanceKm.toStringAsFixed(2)} km',
-                                style: TextStyle(
-                                  fontSize: 32,
-                                  fontWeight: FontWeight.bold,
-                                  color: _isTracking ? Colors.green.shade800 : Colors.blue.shade800,
-                                ),
-                              ),
-                              const SizedBox(height: 8),
-                              Text(
-                                _isTracking ? 'Tracking GPS distance & mapping route...' : 'GPS Stopped',
-                                style: const TextStyle(fontSize: 14),
-                              ),
-                              const SizedBox(height: 12),
-                              ElevatedButton.icon(
-                                onPressed: _isTracking ? _stopGpsTracking : _startGpsTracking,
-                                icon: Icon(_isTracking ? Icons.stop : Icons.play_arrow),
-                                label: Text(_isTracking ? 'Stop Ride' : 'Start GPS Ride'),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: _isTracking ? Colors.red : Colors.green,
-                                  foregroundColor: Colors.white,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ] else ...[
-                      TextFormField(
-                        controller: _manualDistanceController,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        decoration: const InputDecoration(
-                          labelText: 'Distance (km)',
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.straighten),
-                          suffixText: 'km',
-                        ),
-                        validator: (val) {
-                          if (_trackingMode == 'Manual') {
-                            if (val == null || val.trim().isEmpty) return 'Enter distance';
-                            final numVal = double.tryParse(val.trim());
-                            if (numVal == null || numVal <= 0) return 'Enter valid distance';
-                          }
-                          return null;
-                        },
-                      ),
-                    ],
-                    const SizedBox(height: 24),
-
-                    // Participants & Split
-                    const Text(
-                      'Split with Friends',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                    ),
-                    const SizedBox(height: 8),
-                    CheckboxListTile(
-                      title: const Text('Include Me'),
-                      value: _selectedParticipantIds.contains('ME'),
-                      onChanged: (val) {
-                        setState(() {
-                          if (val == true) {
-                            _selectedParticipantIds.add('ME');
-                          } else {
-                            if (_selectedParticipantIds.length > 1) {
-                              _selectedParticipantIds.remove('ME');
-                            }
-                          }
-                        });
+                      validator: (val) {
+                        if (val == null || val.trim().isEmpty) return 'Enter mileage';
+                        final numVal = double.tryParse(val.trim());
+                        if (numVal == null || numVal <= 0) return 'Valid > 0';
+                        return null;
                       },
                     ),
-                    ...friends.map((f) {
-                      return CheckboxListTile(
-                        title: Text(f.name),
-                        value: _selectedParticipantIds.contains(f.id),
-                        onChanged: (val) {
-                          setState(() {
-                            if (val == true) {
-                              _selectedParticipantIds.add(f.id);
-                            } else {
-                              if (_selectedParticipantIds.length > 1) {
-                                _selectedParticipantIds.remove(f.id);
-                              }
-                            }
-                          });
-                        },
-                      );
-                    }),
-                    const SizedBox(height: 16),
-
-                    // Paid By Selector
-                    const Text(
-                      'Paid By',
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      initialValue: _paidBy,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _fuelPriceController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
                       decoration: const InputDecoration(
+                        labelText: 'Fuel Price (₹/L)',
                         border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.payment),
+                        prefixIcon: Icon(Icons.local_gas_station),
                       ),
-                      items: [
-                        const DropdownMenuItem(value: 'ME', child: Text('Me (User)')),
-                        ...friends
-                            .where((f) => _selectedParticipantIds.contains(f.id))
-                            .map((f) => DropdownMenuItem(value: f.id, child: Text(f.name))),
-                      ],
-                      onChanged: (val) => setState(() => _paidBy = val ?? 'ME'),
+                      validator: (val) {
+                        if (val == null || val.trim().isEmpty) return 'Enter fuel price';
+                        final numVal = double.tryParse(val.trim());
+                        if (numVal == null || numVal <= 0) return 'Valid > 0';
+                        return null;
+                      },
                     ),
-                    const SizedBox(height: 24),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
 
-                    // Save Button
-                    ElevatedButton.icon(
-                      onPressed: () => _saveRide(vehicles, friends),
-                      icon: const Icon(Icons.check_circle),
-                      label: const Text('Save & Calculate Ride'),
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                      ),
+              // Tracking Mode Selector
+              const Text(
+                'Tracking Mode',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+              ),
+              const SizedBox(height: 8),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'GPS', label: Text('Live GPS Track'), icon: Icon(Icons.gps_fixed)),
+                  ButtonSegment(value: 'Manual', label: Text('Manual Map / Entry'), icon: Icon(Icons.map)),
+                ],
+                selected: {_trackingMode},
+                onSelectionChanged: (set) => setState(() => _trackingMode = set.first),
+              ),
+              const SizedBox(height: 16),
+
+              // Interactive Real OpenStreetMap Widget
+              RealRouteMapWidget(
+                routePoints: _gpsRoutePoints,
+                currentDistanceKm: _trackingMode == 'GPS'
+                    ? _gpsDistanceKm
+                    : (double.tryParse(_manualDistanceController.text.trim()) ?? 0.0),
+                isLiveTracking: _isTracking,
+                isManualMapMode: _trackingMode == 'Manual',
+                manualStartPoint: _manualStartPoint,
+                manualEndPoint: _manualEndPoint,
+                userCurrentLocation: _currentLocation,
+                onRequestLocation: () => _requestCurrentLocation(quiet: false),
+                onManualPointsSelected: (start, end, distKm) {
+                  setState(() {
+                    _manualStartPoint = start;
+                    _manualEndPoint = end;
+                    _manualDistanceController.text = distKm.toStringAsFixed(2);
+                  });
+                },
+              ),
+              const SizedBox(height: 8),
+
+              // GPS Diagnostic Banner & Troubleshooting Controls
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _currentLocation != null
+                      ? Colors.green.shade50
+                      : (_locationServiceEnabled ? Colors.amber.shade50 : Colors.red.shade50),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: _currentLocation != null
+                        ? Colors.green.shade300
+                        : (_locationServiceEnabled ? Colors.amber.shade300 : Colors.red.shade300),
+                  ),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      children: [
+                        Icon(
+                          _currentLocation != null
+                              ? Icons.check_circle
+                              : (_locationServiceEnabled ? Icons.location_searching : Icons.location_off),
+                          color: _currentLocation != null
+                              ? Colors.green.shade800
+                              : (_locationServiceEnabled ? Colors.amber.shade900 : Colors.red.shade800),
+                          size: 18,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            _locationStatusMessage,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: _currentLocation != null
+                                  ? Colors.green.shade900
+                                  : (_locationServiceEnabled ? Colors.amber.shade900 : Colors.red.shade900),
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () => _requestCurrentLocation(quiet: false),
+                          style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
+                          child: const Text('REFRESH GPS'),
+                        ),
+                      ],
                     ),
+                    if (!_locationServiceEnabled || _locationPermission != LocationPermission.always && _locationPermission != LocationPermission.whileInUse) ...[
+                      const Divider(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                        children: [
+                          if (!_locationServiceEnabled)
+                            OutlinedButton.icon(
+                              onPressed: () => Geolocator.openLocationSettings(),
+                              icon: const Icon(Icons.settings, size: 14),
+                              label: const Text('Turn On GPS', style: TextStyle(fontSize: 11)),
+                              style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
+                            ),
+                          OutlinedButton.icon(
+                            onPressed: () => Geolocator.openAppSettings(),
+                            icon: const Icon(Icons.security, size: 14),
+                            label: const Text('App Permissions', style: TextStyle(fontSize: 11)),
+                            style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
               ),
-            ),
+              const SizedBox(height: 12),
+
+              // Quick Location Helper for Manual Map Mode
+              if (_trackingMode == 'Manual') ...[
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    if (_currentLocation == null) {
+                      await _requestCurrentLocation(quiet: false);
+                    }
+                    if (_currentLocation != null) {
+                      setState(() {
+                        _manualStartPoint = _currentLocation;
+                        if (_manualEndPoint != null) {
+                          final distMeters = Geolocator.distanceBetween(
+                            _manualStartPoint!.latitude,
+                            _manualStartPoint!.longitude,
+                            _manualEndPoint!.latitude,
+                            _manualEndPoint!.longitude,
+                          );
+                          _manualDistanceController.text = (distMeters / 1000.0).toStringAsFixed(2);
+                        }
+                      });
+                    }
+                  },
+                  icon: const Icon(Icons.my_location, size: 18),
+                  label: const Text('Use Current Location as Start Point'),
+                ),
+                const SizedBox(height: 12),
+              ],
+
+              // Mode-specific Controls
+              if (_trackingMode == 'GPS') ...[
+                Card(
+                  color: _isTracking ? Colors.green.shade50 : Colors.blue.shade50,
+                  elevation: 2,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      children: [
+                        Text(
+                          '${_gpsDistanceKm.toStringAsFixed(2)} km',
+                          style: TextStyle(
+                            fontSize: 34,
+                            fontWeight: FontWeight.bold,
+                            color: _isTracking ? Colors.green.shade800 : Colors.blue.shade900,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          _isTracking
+                              ? 'Tracking real-time GPS movement...'
+                              : (_currentLocation != null
+                                  ? 'GPS Ready (${_currentLocation!.latitude.toStringAsFixed(4)}, ${_currentLocation!.longitude.toStringAsFixed(4)})'
+                                  : 'GPS Searching - Standby'),
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                        ),
+                        const SizedBox(height: 14),
+                        ElevatedButton.icon(
+                          onPressed: _isTracking ? _stopGpsTracking : _startGpsTracking,
+                          icon: Icon(_isTracking ? Icons.stop : Icons.play_arrow),
+                          label: Text(_isTracking ? 'Stop Ride' : 'Start Live GPS Ride'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _isTracking ? Colors.red : Colors.green.shade700,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ] else ...[
+                TextFormField(
+                  controller: _manualDistanceController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Distance (km)',
+                    hintText: 'Tap 2 points on map or enter manually',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.straighten),
+                    suffixText: 'km',
+                  ),
+                  onChanged: (val) {
+                    setState(() {});
+                  },
+                  validator: (val) {
+                    if (_trackingMode == 'Manual') {
+                      if (val == null || val.trim().isEmpty) return 'Enter or select distance on map';
+                      final numVal = double.tryParse(val.trim());
+                      if (numVal == null || numVal <= 0) return 'Enter valid distance';
+                    }
+                    return null;
+                  },
+                ),
+              ],
+              const SizedBox(height: 24),
+
+              // Participants & Split Section
+              const Text(
+                'Split with Friends',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+              ),
+              const SizedBox(height: 8),
+              CheckboxListTile(
+                title: const Text('Include Me'),
+                value: _selectedParticipantIds.contains('ME'),
+                onChanged: (val) {
+                  setState(() {
+                    if (val == true) {
+                      _selectedParticipantIds.add('ME');
+                    } else {
+                      if (_selectedParticipantIds.length > 1) {
+                        _selectedParticipantIds.remove('ME');
+                      }
+                    }
+                  });
+                },
+              ),
+              ...friends.map((f) {
+                return CheckboxListTile(
+                  title: Text(f.name),
+                  value: _selectedParticipantIds.contains(f.id),
+                  onChanged: (val) {
+                    setState(() {
+                      if (val == true) {
+                        _selectedParticipantIds.add(f.id);
+                      } else {
+                        if (_selectedParticipantIds.length > 1) {
+                          _selectedParticipantIds.remove(f.id);
+                        }
+                      }
+                    });
+                  },
+                );
+              }),
+              const SizedBox(height: 16),
+
+              // Paid By Selector
+              const Text(
+                'Paid By',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              DropdownButtonFormField<String>(
+                initialValue: _paidBy,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.payment),
+                ),
+                items: [
+                  const DropdownMenuItem(value: 'ME', child: Text('Me (User)')),
+                  ...friends
+                      .where((f) => _selectedParticipantIds.contains(f.id))
+                      .map((f) => DropdownMenuItem(value: f.id, child: Text(f.name))),
+                ],
+                onChanged: (val) => setState(() => _paidBy = val ?? 'ME'),
+              ),
+              const SizedBox(height: 24),
+
+              // Save Button
+              ElevatedButton.icon(
+                onPressed: () => _saveRide(friends),
+                icon: const Icon(Icons.check_circle),
+                label: const Text('Save & Calculate Ride'),
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  backgroundColor: Colors.blue.shade800,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

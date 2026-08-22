@@ -72,7 +72,7 @@ class RideHistoryScreen extends ConsumerWidget {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          '${DateFormat('MMM d, yyyy HH:mm').format(ride.date)} • ${ride.vehicleName}',
+                          '${DateFormat('MMM d, yyyy HH:mm').format(ride.date)} • ${ride.mileage.toStringAsFixed(0)} km/L',
                           style: const TextStyle(color: Colors.grey, fontSize: 12),
                         ),
                         const SizedBox(height: 8),

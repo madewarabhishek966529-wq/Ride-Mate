@@ -3,7 +3,6 @@ import '../friends/friends_list_screen.dart';
 import '../rides/monthly_analytics_screen.dart';
 import '../rides/ride_history_screen.dart';
 import '../settings/settings_screen.dart';
-import '../vehicles/vehicle_list_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -17,7 +16,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   final List<Widget> _pages = const [
     RideHistoryScreen(),
-    VehicleListScreen(),
     FriendsListScreen(),
     MonthlyAnalyticsScreen(),
     SettingsScreen(),
@@ -44,11 +42,6 @@ class _HomeScreenState extends State<HomeScreen> {
             label: 'Rides',
           ),
           NavigationDestination(
-            icon: Icon(Icons.two_wheeler_outlined),
-            selectedIcon: Icon(Icons.two_wheeler),
-            label: 'Vehicles',
-          ),
-          NavigationDestination(
             icon: Icon(Icons.people_outline),
             selectedIcon: Icon(Icons.people),
             label: 'Friends',
@@ -68,3 +61,4 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
+

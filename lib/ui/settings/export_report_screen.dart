@@ -16,7 +16,6 @@ class ExportReportScreen extends ConsumerStatefulWidget {
 class _ExportReportScreenState extends ConsumerState<ExportReportScreen> {
   DateRangeOption _dateRangeOption = DateRangeOption.thisMonth;
   ExportFormat _exportFormat = ExportFormat.csv;
-  String? _selectedVehicleId; // null = All vehicles
   DateTime _customStartDate = DateTime.now().subtract(const Duration(days: 30));
   DateTime _customEndDate = DateTime.now();
 
@@ -43,12 +42,10 @@ class _ExportReportScreenState extends ConsumerState<ExportReportScreen> {
 
     final friendNameMap = {for (var f in friends) f.id: f.name};
 
-    // Filter rides by date range and vehicle scope
+    // Filter rides by date range
     final filteredRides = allRides.where((r) {
-      final inRange = (r.date.isAfter(start) || r.date.isAtSameMomentAs(start)) &&
+      return (r.date.isAfter(start) || r.date.isAtSameMomentAs(start)) &&
           (r.date.isBefore(end) || r.date.isAtSameMomentAs(end));
-      final matchesVehicle = _selectedVehicleId == null || r.vehicleId == _selectedVehicleId;
-      return inRange && matchesVehicle;
     }).toList();
 
     if (filteredRides.isEmpty) {
@@ -88,15 +85,12 @@ class _ExportReportScreenState extends ConsumerState<ExportReportScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final vehicles = ref.watch(vehicleListProvider);
     final (start, end) = _computeDateRange();
     final allRides = ref.watch(rideListProvider);
 
     final filteredCount = allRides.where((r) {
-      final inRange = (r.date.isAfter(start) || r.date.isAtSameMomentAs(start)) &&
+      return (r.date.isAfter(start) || r.date.isAtSameMomentAs(start)) &&
           (r.date.isBefore(end) || r.date.isAtSameMomentAs(end));
-      final matchesVehicle = _selectedVehicleId == null || r.vehicleId == _selectedVehicleId;
-      return inRange && matchesVehicle;
     }).length;
 
     return Scaffold(
@@ -207,38 +201,6 @@ class _ExportReportScreenState extends ConsumerState<ExportReportScreen> {
               onSelectionChanged: (set) {
                 setState(() {
                   _exportFormat = set.first;
-                });
-              },
-            ),
-            const SizedBox(height: 24),
-
-            // Scope / Vehicle Filter
-            const Text(
-              'Vehicle Scope',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-            ),
-            const SizedBox(height: 8),
-            DropdownButtonFormField<String?>(
-              initialValue: _selectedVehicleId,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                prefixIcon: Icon(Icons.directions_car),
-              ),
-              items: [
-                const DropdownMenuItem<String?>(
-                  value: null,
-                  child: Text('All Vehicles'),
-                ),
-                ...vehicles.map((v) {
-                  return DropdownMenuItem<String?>(
-                    value: v.id,
-                    child: Text(v.name),
-                  );
-                }),
-              ],
-              onChanged: (val) {
-                setState(() {
-                  _selectedVehicleId = val;
                 });
               },
             ),

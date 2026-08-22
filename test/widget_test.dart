@@ -27,7 +27,7 @@ void main() {
 
     // Verify home screen bottom navigation elements
     expect(find.text('Rides'), findsWidgets);
-    expect(find.text('Vehicles'), findsWidgets);
     expect(find.text('Friends'), findsWidgets);
+    expect(find.text('Analytics'), findsWidgets);
   });
 }

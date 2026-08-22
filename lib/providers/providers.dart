@@ -1,20 +1,15 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../data/database/app_database.dart';
 import '../data/repositories/friend_repository.dart';
-import '../data/repositories/fuel_refill_repository.dart';
 import '../data/repositories/ride_repository.dart';
 import '../data/repositories/settlement_repository.dart';
-import '../data/repositories/vehicle_repository.dart';
 import '../domain/models/friend.dart';
-import '../domain/models/fuel_refill.dart';
 import '../domain/models/ride.dart';
 import '../domain/models/settlement_record.dart';
-import '../domain/models/vehicle.dart';
 import '../services/distance_calculation_service.dart';
 import '../services/export_service.dart';
 import '../services/fuel_calculation_service.dart';
 import '../services/ledger_service.dart';
-import '../services/mileage_analysis_service.dart';
 import '../services/split_calculation_service.dart';
 
 // Database Provider
@@ -23,19 +18,9 @@ final databaseProvider = Provider<AppDatabaseInterface>((ref) {
 });
 
 // Repositories
-final vehicleRepositoryProvider = Provider<VehicleRepository>((ref) {
-  final db = ref.watch(databaseProvider);
-  return VehicleRepository(db);
-});
-
 final friendRepositoryProvider = Provider<FriendRepository>((ref) {
   final db = ref.watch(databaseProvider);
   return FriendRepository(db);
-});
-
-final fuelRefillRepositoryProvider = Provider<FuelRefillRepository>((ref) {
-  final db = ref.watch(databaseProvider);
-  return FuelRefillRepository(db);
 });
 
 final rideRepositoryProvider = Provider<RideRepository>((ref) {
@@ -61,50 +46,12 @@ final splitCalculationServiceProvider = Provider<SplitCalculationService>((ref) 
   return SplitCalculationService();
 });
 
-final mileageAnalysisServiceProvider = Provider<MileageAnalysisService>((ref) {
-  return MileageAnalysisService();
-});
-
 final ledgerServiceProvider = Provider<LedgerService>((ref) {
   return LedgerService();
 });
 
 final exportServiceProvider = Provider<ExportService>((ref) {
   return ExportService();
-});
-
-// Vehicles Notifier
-class VehicleListNotifier extends StateNotifier<List<Vehicle>> {
-  final VehicleRepository _repo;
-
-  VehicleListNotifier(this._repo) : super([]) {
-    loadVehicles();
-  }
-
-  Future<void> loadVehicles() async {
-    final vehicles = await _repo.getAllVehicles();
-    state = vehicles;
-  }
-
-  Future<void> addVehicle(Vehicle vehicle) async {
-    await _repo.insertVehicle(vehicle);
-    await loadVehicles();
-  }
-
-  Future<void> updateVehicle(Vehicle vehicle) async {
-    await _repo.updateVehicle(vehicle);
-    await loadVehicles();
-  }
-
-  Future<void> deleteVehicle(String id) async {
-    await _repo.deleteVehicle(id);
-    await loadVehicles();
-  }
-}
-
-final vehicleListProvider = StateNotifierProvider<VehicleListNotifier, List<Vehicle>>((ref) {
-  final repo = ref.watch(vehicleRepositoryProvider);
-  return VehicleListNotifier(repo);
 });
 
 // Friends Notifier
@@ -134,30 +81,6 @@ class FriendListNotifier extends StateNotifier<List<Friend>> {
 final friendListProvider = StateNotifierProvider<FriendListNotifier, List<Friend>>((ref) {
   final repo = ref.watch(friendRepositoryProvider);
   return FriendListNotifier(repo);
-});
-
-// Refills Notifier
-class FuelRefillListNotifier extends StateNotifier<List<FuelRefill>> {
-  final FuelRefillRepository _repo;
-
-  FuelRefillListNotifier(this._repo) : super([]) {
-    loadRefills();
-  }
-
-  Future<void> loadRefills() async {
-    final refills = await _repo.getAllRefills();
-    state = refills;
-  }
-
-  Future<void> addRefill(FuelRefill refill) async {
-    await _repo.insertRefill(refill);
-    await loadRefills();
-  }
-}
-
-final fuelRefillListProvider = StateNotifierProvider<FuelRefillListNotifier, List<FuelRefill>>((ref) {
-  final repo = ref.watch(fuelRefillRepositoryProvider);
-  return FuelRefillListNotifier(repo);
 });
 
 // Rides Notifier
@@ -207,14 +130,6 @@ final settlementListProvider =
     StateNotifierProvider<SettlementListNotifier, List<SettlementRecord>>((ref) {
   final repo = ref.watch(settlementRepositoryProvider);
   return SettlementListNotifier(repo);
-});
-
-// Computed Actual Mileage Provider for a Vehicle ID
-final actualMileageProvider = Provider.family<double?, String>((ref, vehicleId) {
-  final refills = ref.watch(fuelRefillListProvider).where((r) => r.vehicleId == vehicleId).toList();
-  final rides = ref.watch(rideListProvider).where((r) => r.vehicleId == vehicleId).toList();
-  final service = ref.watch(mileageAnalysisServiceProvider);
-  return service.calculateActualMileage(refills, rides);
 });
 
 // Computed Friend Ledger Provider for a Friend ID
