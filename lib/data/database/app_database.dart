@@ -257,6 +257,9 @@ class AppDatabase {
     try {
       await db.execute('ALTER TABLE rides ADD COLUMN stopCount INTEGER DEFAULT 1;');
     } catch (_) {}
+    try {
+      await db.execute('ALTER TABLE rides ADD COLUMN routePoints TEXT DEFAULT "[]";');
+    } catch (_) {}
   }
 
   static Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
@@ -266,6 +269,9 @@ class AppDatabase {
       } catch (_) {}
       try {
         await db.execute('ALTER TABLE rides ADD COLUMN stopCount INTEGER DEFAULT 1;');
+      } catch (_) {}
+      try {
+        await db.execute('ALTER TABLE rides ADD COLUMN routePoints TEXT DEFAULT "[]";');
       } catch (_) {}
     }
   }
@@ -318,7 +324,8 @@ class AppDatabase {
         stopCount INTEGER DEFAULT 1,
         paidBy TEXT NOT NULL,
         participantIds TEXT NOT NULL,
-        participantShares TEXT NOT NULL
+        participantShares TEXT NOT NULL,
+        routePoints TEXT DEFAULT '[]'
       )
     ''');
 

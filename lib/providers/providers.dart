@@ -149,6 +149,11 @@ class RideListNotifier extends StateNotifier<List<Ride>> {
     await _repo.insertRide(ride);
     await loadRides();
   }
+
+  Future<void> deleteRide(String id) async {
+    await _repo.deleteRide(id);
+    await loadRides();
+  }
 }
 
 final rideListProvider = StateNotifierProvider<RideListNotifier, List<Ride>>((ref) {

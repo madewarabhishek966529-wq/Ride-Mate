@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:latlong2/latlong.dart';
+import '../../domain/models/ride.dart';
 import '../../providers/providers.dart';
 import '../widgets/gradient_button.dart';
+import '../widgets/real_route_map_widget.dart';
 import 'ride_tracking_screen.dart';
 
 class RideHistoryScreen extends ConsumerWidget {
@@ -13,6 +16,10 @@ class RideHistoryScreen extends ConsumerWidget {
     final rides = ref.watch(rideListProvider);
     final friends = ref.watch(friendListProvider);
     final friendMap = {for (var f in friends) f.id: f.name};
+
+    final totalDistance = rides.fold<double>(0.0, (sum, r) => sum + r.distanceKm);
+    final totalCost = rides.fold<double>(0.0, (sum, r) => sum + r.totalFuelCost);
+    final totalRides = rides.length;
 
     return Scaffold(
       appBar: AppBar(
@@ -68,9 +75,13 @@ class RideHistoryScreen extends ConsumerWidget {
             )
           : ListView.builder(
               padding: const EdgeInsets.all(12),
-              itemCount: rides.length,
+              itemCount: rides.length + 1, // 1 for summary header card
               itemBuilder: (context, index) {
-                final ride = rides[index];
+                if (index == 0) {
+                  return _buildSummaryCard(totalDistance, totalRides, totalCost);
+                }
+
+                final ride = rides[index - 1];
                 final payerName = ride.paidBy == 'ME' ? 'Me' : (friendMap[ride.paidBy] ?? ride.paidBy);
 
                 return TweenAnimationBuilder<double>(
@@ -106,12 +117,33 @@ class RideHistoryScreen extends ConsumerWidget {
                                   ),
                                 ),
                               ),
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
+                                    tooltip: 'Delete Ride',
+                                    visualDensity: VisualDensity.compact,
+                                    onPressed: () => _confirmDeleteRide(context, ref, ride),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                '${DateFormat('MMM d, yyyy • HH:mm').format(ride.date)} • ${ride.vehicleName}',
+                                style: const TextStyle(color: Colors.grey, fontSize: 12),
+                              ),
                               Wrap(
-                                spacing: 6,
+                                spacing: 4,
                                 children: [
                                   if (ride.isRoundTrip)
                                     Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                       decoration: BoxDecoration(
                                         color: Colors.purple.shade700,
                                         borderRadius: BorderRadius.circular(10),
@@ -119,46 +151,46 @@ class RideHistoryScreen extends ConsumerWidget {
                                       child: const Row(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          Icon(Icons.sync, size: 11, color: Colors.white),
-                                          SizedBox(width: 3),
-                                          Text('Return', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                                          Icon(Icons.sync, size: 10, color: Colors.white),
+                                          SizedBox(width: 2),
+                                          Text('Return', style: TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)),
                                         ],
                                       ),
                                     ),
                                   if (ride.stopCount > 1)
                                     Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                       decoration: BoxDecoration(
                                         color: Colors.orange.shade800,
                                         borderRadius: BorderRadius.circular(10),
                                       ),
                                       child: Text(
                                         '${ride.stopCount} Stops',
-                                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                                        style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
                                       ),
                                     ),
                                   Container(
-                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                                     decoration: BoxDecoration(
                                       gradient: ride.trackingMode == 'GPS'
                                           ? const LinearGradient(colors: [Color(0xFF10B981), Color(0xFF059669)])
                                           : const LinearGradient(colors: [Color(0xFF6366F1), Color(0xFF3B82F6)]),
-                                      borderRadius: BorderRadius.circular(12),
+                                      borderRadius: BorderRadius.circular(10),
                                     ),
                                     child: Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
                                         Icon(
                                           ride.trackingMode == 'GPS' ? Icons.gps_fixed : Icons.map,
-                                          size: 12,
+                                          size: 10,
                                           color: Colors.white,
                                         ),
-                                        const SizedBox(width: 4),
+                                        const SizedBox(width: 3),
                                         Text(
                                           ride.trackingMode,
                                           style: const TextStyle(
                                             color: Colors.white,
-                                            fontSize: 11,
+                                            fontSize: 10,
                                             fontWeight: FontWeight.bold,
                                           ),
                                         ),
@@ -167,13 +199,7 @@ class RideHistoryScreen extends ConsumerWidget {
                                   ),
                                 ],
                               ),
-
                             ],
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            '${DateFormat('MMM d, yyyy • HH:mm').format(ride.date)} • ${ride.vehicleName}',
-                            style: const TextStyle(color: Colors.grey, fontSize: 12),
                           ),
                           const SizedBox(height: 10),
                           const Divider(height: 1),
@@ -185,6 +211,24 @@ class RideHistoryScreen extends ConsumerWidget {
                               _statColumn('Fuel Cost', '₹${ride.totalFuelCost.toStringAsFixed(2)}', Colors.green.shade700),
                               _statColumn('Paid By', payerName, Colors.purple.shade700),
                             ],
+                          ),
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: OutlinedButton.icon(
+                              style: OutlinedButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                side: BorderSide(color: Colors.blue.shade400),
+                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                visualDensity: VisualDensity.compact,
+                              ),
+                              onPressed: () => _showRideMapDialog(context, ride),
+                              icon: const Icon(Icons.map_outlined, size: 16, color: Color(0xFF6366F1)),
+                              label: const Text(
+                                'View Route Map',
+                                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF6366F1)),
+                              ),
+                            ),
                           ),
                         ],
                       ),
@@ -223,6 +267,91 @@ class RideHistoryScreen extends ConsumerWidget {
     );
   }
 
+  Widget _buildSummaryCard(double totalDistance, int totalRides, double totalCost) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          gradient: LinearGradient(
+            colors: [
+              const Color(0xFF6366F1).withValues(alpha: 0.12),
+              const Color(0xFF3B82F6).withValues(alpha: 0.08),
+            ],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Row(
+              children: [
+                Icon(Icons.query_stats, color: Color(0xFF6366F1), size: 20),
+                SizedBox(width: 8),
+                Text(
+                  'Total Travel History',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                _summaryItem(
+                  icon: Icons.map,
+                  iconColor: Colors.blue.shade700,
+                  label: 'Total Traveled',
+                  value: '${totalDistance.toStringAsFixed(1)} km',
+                ),
+                Container(width: 1, height: 35, color: Colors.grey.withValues(alpha: 0.3)),
+                _summaryItem(
+                  icon: Icons.directions_bike,
+                  iconColor: Colors.purple.shade700,
+                  label: 'Total Rides',
+                  value: '$totalRides',
+                ),
+                Container(width: 1, height: 35, color: Colors.grey.withValues(alpha: 0.3)),
+                _summaryItem(
+                  icon: Icons.local_gas_station,
+                  iconColor: Colors.green.shade700,
+                  label: 'Fuel Spent',
+                  value: '₹${totalCost.toStringAsFixed(0)}',
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _summaryItem({
+    required IconData icon,
+    required Color iconColor,
+    required String label,
+    required String value,
+  }) {
+    return Column(
+      children: [
+        Icon(icon, color: iconColor, size: 20),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+        ),
+        Text(
+          label,
+          style: const TextStyle(color: Colors.grey, fontSize: 11),
+        ),
+      ],
+    );
+  }
+
   Widget _statColumn(String label, String value, Color color) {
     return Column(
       children: [
@@ -233,6 +362,132 @@ class RideHistoryScreen extends ConsumerWidget {
           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: color),
         ),
       ],
+    );
+  }
+
+  void _showRideMapDialog(BuildContext context, Ride ride) {
+    final List<LatLng> points = ride.routePoints
+        .map((p) => LatLng(p['lat']!, p['lng']!))
+        .toList();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return Container(
+          height: MediaQuery.of(context).size.height * 0.75,
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          ride.name,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
+                        ),
+                        Text(
+                          '${ride.distanceKm.toStringAsFixed(2)} km • ${ride.trackingMode} Mode',
+                          style: const TextStyle(color: Colors.grey, fontSize: 13),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(16),
+                  child: points.isNotEmpty
+                      ? RealRouteMapWidget(
+                          routePoints: points,
+                          currentDistanceKm: ride.distanceKm,
+                          isLiveTracking: false,
+                        )
+                      : Container(
+                          color: Colors.grey.withValues(alpha: 0.1),
+                          child: Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.map_outlined, size: 64, color: Colors.grey.shade400),
+                                const SizedBox(height: 12),
+                                const Text(
+                                  'No GPS / Map Polyline saved for this ride',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Total Distance: ${ride.distanceKm.toStringAsFixed(2)} km',
+                                  style: const TextStyle(color: Colors.grey, fontSize: 12),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _confirmDeleteRide(BuildContext context, WidgetRef ref, Ride ride) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: const Row(
+            children: [
+              Icon(Icons.delete_forever, color: Colors.redAccent),
+              SizedBox(width: 8),
+              Text('Delete Ride'),
+            ],
+          ),
+          content: Text('Are you sure you want to delete "${ride.name}"? This action cannot be undone.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.redAccent,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await ref.read(rideListProvider.notifier).deleteRide(ride.id);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Deleted "${ride.name}"'),
+                      duration: const Duration(seconds: 2),
+                    ),
+                  );
+                }
+              },
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
     );
   }
 }

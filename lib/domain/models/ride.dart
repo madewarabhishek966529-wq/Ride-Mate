@@ -17,6 +17,7 @@ class Ride {
   final String paidBy; // 'ME' or friendId
   final List<String> participantIds;
   final Map<String, double> participantShares; // participantId -> amount
+  final List<Map<String, double>> routePoints; // [{'lat': 28.6, 'lng': 77.2}, ...]
 
   Ride({
     required this.id,
@@ -35,6 +36,7 @@ class Ride {
     required this.paidBy,
     required this.participantIds,
     required this.participantShares,
+    this.routePoints = const [],
   });
 
   Map<String, dynamic> toMap() {
@@ -55,12 +57,27 @@ class Ride {
       'paidBy': paidBy,
       'participantIds': jsonEncode(participantIds),
       'participantShares': jsonEncode(participantShares),
+      'routePoints': jsonEncode(routePoints),
     };
   }
 
   factory Ride.fromMap(Map<String, dynamic> map) {
     final rawShares = jsonDecode(map['participantShares'] as String) as Map<String, dynamic>;
     final shares = rawShares.map((k, v) => MapEntry(k, (v as num).toDouble()));
+
+    List<Map<String, double>> parsedRoutePoints = [];
+    if (map['routePoints'] != null && map['routePoints'] is String && (map['routePoints'] as String).isNotEmpty) {
+      try {
+        final rawList = jsonDecode(map['routePoints'] as String) as List;
+        parsedRoutePoints = rawList.map((item) {
+          final m = item as Map<String, dynamic>;
+          return {
+            'lat': (m['lat'] as num).toDouble(),
+            'lng': (m['lng'] as num).toDouble(),
+          };
+        }).toList();
+      } catch (_) {}
+    }
 
     return Ride(
       id: map['id'] as String,
@@ -79,6 +96,7 @@ class Ride {
       paidBy: map['paidBy'] as String,
       participantIds: List<String>.from(jsonDecode(map['participantIds'] as String) as List),
       participantShares: shares,
+      routePoints: parsedRoutePoints,
     );
   }
 }

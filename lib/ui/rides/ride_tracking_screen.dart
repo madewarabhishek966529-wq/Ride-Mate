@@ -542,6 +542,15 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
       final participantList = _selectedParticipantIds.toList();
       final shares = splitCalc.calculateEvenShares(fuelCost, participantList);
 
+      List<Map<String, double>> savedRoutePoints = [];
+      if (_trackingMode == 'GPS' && _gpsRoutePoints.isNotEmpty) {
+        savedRoutePoints = _gpsRoutePoints.map((pt) => {'lat': pt.latitude, 'lng': pt.longitude}).toList();
+      } else if (_manualRoadPolyline.isNotEmpty) {
+        savedRoutePoints = _manualRoadPolyline.map((pt) => {'lat': pt.latitude, 'lng': pt.longitude}).toList();
+      } else if (_manualWaypoints.isNotEmpty) {
+        savedRoutePoints = _manualWaypoints.map((pt) => {'lat': pt.latitude, 'lng': pt.longitude}).toList();
+      }
+
       final newRide = Ride(
         id: const Uuid().v4(),
         name: _nameController.text.trim(),
@@ -559,6 +568,7 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
         paidBy: _paidBy,
         participantIds: participantList,
         participantShares: shares,
+        routePoints: savedRoutePoints,
       );
 
       await ref.read(rideListProvider.notifier).addRide(newRide);
