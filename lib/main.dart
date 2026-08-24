@@ -6,6 +6,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:sqflite_common_ffi_web/sqflite_ffi_web.dart';
 import 'data/database/app_database.dart';
 import 'providers/providers.dart';
+import 'services/notification_service.dart';
 import 'ui/settings/settings_screen.dart';
 import 'ui/splash/splash_screen.dart';
 
@@ -82,15 +83,32 @@ class _RootAppState extends State<RootApp> {
     );
   }
 }
-
-class RideMateApp extends ConsumerWidget {
+class RideMateApp extends ConsumerStatefulWidget {
   const RideMateApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<RideMateApp> createState() => _RideMateAppState();
+}
+
+class _RideMateAppState extends ConsumerState<RideMateApp> {
+  @override
+  void initState() {
+    super.initState();
+    _initNotificationService();
+  }
+
+  Future<void> _initNotificationService() async {
+    final notificationService = NotificationService();
+    await notificationService.init();
+    await notificationService.showQuickStartNotification();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final themeMode = ref.watch(themeModeProvider);
 
     return MaterialApp(
+      navigatorKey: NotificationService().navigatorKey,
       title: 'RideMate',
       debugShowCheckedModeBanner: false,
       themeMode: themeMode,
