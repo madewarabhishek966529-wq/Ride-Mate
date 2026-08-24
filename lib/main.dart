@@ -90,11 +90,25 @@ class RideMateApp extends ConsumerStatefulWidget {
   ConsumerState<RideMateApp> createState() => _RideMateAppState();
 }
 
-class _RideMateAppState extends ConsumerState<RideMateApp> {
+class _RideMateAppState extends ConsumerState<RideMateApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initNotificationService();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached || state == AppLifecycleState.hidden) {
+      NotificationService().showQuickStartNotification();
+    }
   }
 
   Future<void> _initNotificationService() async {
