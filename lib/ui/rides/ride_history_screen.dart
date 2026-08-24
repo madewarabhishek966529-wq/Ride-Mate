@@ -222,10 +222,10 @@ class RideHistoryScreen extends ConsumerWidget {
                                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                                 visualDensity: VisualDensity.compact,
                               ),
-                              onPressed: () => _showRideMapDialog(context, ride),
+                              onPressed: () => _showRideMapDialog(context, ride, friendMap),
                               icon: const Icon(Icons.map_outlined, size: 16, color: Color(0xFF6366F1)),
                               label: const Text(
-                                'View Route Map',
+                                'View Route Map & Details',
                                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF6366F1)),
                               ),
                             ),
@@ -365,23 +365,27 @@ class RideHistoryScreen extends ConsumerWidget {
     );
   }
 
-  void _showRideMapDialog(BuildContext context, Ride ride) {
+  void _showRideMapDialog(BuildContext context, Ride ride, Map<String, String> friendMap) {
     final List<LatLng> points = ride.routePoints
         .map((p) => LatLng(p['lat']!, p['lng']!))
         .toList();
+    final payerName = ride.paidBy == 'ME' ? 'Me' : (friendMap[ride.paidBy] ?? ride.paidBy);
 
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
       ),
       builder: (context) {
         return Container(
-          height: MediaQuery.of(context).size.height * 0.75,
+          height: MediaQuery.of(context).size.height * 0.88,
           padding: const EdgeInsets.all(16),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Header title and close button
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -394,8 +398,8 @@ class RideHistoryScreen extends ConsumerWidget {
                           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
                         ),
                         Text(
-                          '${ride.distanceKm.toStringAsFixed(2)} km • ${ride.trackingMode} Mode',
-                          style: const TextStyle(color: Colors.grey, fontSize: 13),
+                          '${DateFormat('EEEE, MMM d, yyyy • HH:mm').format(ride.date)} • ${ride.vehicleName}',
+                          style: const TextStyle(color: Colors.grey, fontSize: 12),
                         ),
                       ],
                     ),
@@ -406,37 +410,175 @@ class RideHistoryScreen extends ConsumerWidget {
                   ),
                 ],
               ),
+              const SizedBox(height: 8),
+
+              // Badges row
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      gradient: ride.trackingMode == 'GPS'
+                          ? const LinearGradient(colors: [Color(0xFF10B981), Color(0xFF059669)])
+                          : const LinearGradient(colors: [Color(0xFF6366F1), Color(0xFF3B82F6)]),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          ride.trackingMode == 'GPS' ? Icons.gps_fixed : Icons.map,
+                          size: 12,
+                          color: Colors.white,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${ride.trackingMode} Mode',
+                          style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (ride.isRoundTrip)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.purple.shade700,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.sync, size: 12, color: Colors.white),
+                          SizedBox(width: 3),
+                          Text('Return Trip', style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    ),
+                  if (ride.stopCount > 1)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.shade800,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '${ride.stopCount} Stops',
+                        style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade700,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      points.isNotEmpty ? '${points.length} Map GPS Points' : 'Manual Distance Entry',
+                      style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 12),
-              Expanded(
+
+              // Interactive Map View
+              SizedBox(
+                height: 280,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(16),
-                  child: points.isNotEmpty
-                      ? RealRouteMapWidget(
-                          routePoints: points,
-                          currentDistanceKm: ride.distanceKm,
-                          isLiveTracking: false,
-                        )
-                      : Container(
-                          color: Colors.grey.withValues(alpha: 0.1),
-                          child: Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.map_outlined, size: 64, color: Colors.grey.shade400),
-                                const SizedBox(height: 12),
-                                const Text(
-                                  'No GPS / Map Polyline saved for this ride',
-                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                                ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  'Total Distance: ${ride.distanceKm.toStringAsFixed(2)} km',
-                                  style: const TextStyle(color: Colors.grey, fontSize: 12),
-                                ),
-                              ],
-                            ),
+                  child: RealRouteMapWidget(
+                    routePoints: points,
+                    currentDistanceKm: ride.distanceKm,
+                    isLiveTracking: false,
+                    isManualMapMode: points.isEmpty,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+
+              // Detailed Ride Info Card
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Card(
+                    elevation: 2,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    child: Padding(
+                      padding: const EdgeInsets.all(14.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Ride Travel Details',
+                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                           ),
-                        ),
+                          const SizedBox(height: 10),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceAround,
+                            children: [
+                              _statColumn('Distance', '${ride.distanceKm.toStringAsFixed(2)} km', Colors.blue.shade700),
+                              _statColumn('Fuel Consumed', '${ride.fuelUsedLiters.toStringAsFixed(2)} L', Colors.orange.shade700),
+                              _statColumn('Total Fuel Cost', '₹${ride.totalFuelCost.toStringAsFixed(2)}', Colors.green.shade700),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
+                          const Divider(height: 1),
+                          const SizedBox(height: 12),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                'Vehicle Mileage: ${ride.mileage.toStringAsFixed(1)} km/L',
+                                style: const TextStyle(fontSize: 12, color: Colors.grey),
+                              ),
+                              Text(
+                                'Fuel Rate: ₹${ride.fuelPrice.toStringAsFixed(1)}/L',
+                                style: const TextStyle(fontSize: 12, color: Colors.grey),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              const Icon(Icons.account_balance_wallet_outlined, size: 16, color: Colors.purple),
+                              const SizedBox(width: 6),
+                              Text(
+                                'Paid By: $payerName',
+                                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.purple.shade700),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'Split Shares:',
+                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey),
+                          ),
+                          const SizedBox(height: 4),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 4,
+                            children: ride.participantShares.entries.map((entry) {
+                              final pName = entry.key == 'ME' ? 'Me' : (friendMap[entry.key] ?? entry.key);
+                              return Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.blue.withValues(alpha: 0.3)),
+                                ),
+                                child: Text(
+                                  '$pName: ₹${entry.value.toStringAsFixed(2)}',
+                                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ],

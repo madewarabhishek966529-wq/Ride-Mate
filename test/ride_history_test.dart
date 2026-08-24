@@ -58,7 +58,7 @@ void main() {
     expect(find.text('Total Travel History'), findsOneWidget);
     expect(find.text('50.0 km'), findsOneWidget);
     expect(find.text('Weekend Trip'), findsOneWidget);
-    expect(find.text('View Route Map'), findsOneWidget);
+    expect(find.text('View Route Map & Details'), findsOneWidget);
 
     // Verify Delete Dialog flow
     final deleteIcon = find.byIcon(Icons.delete_outline);
