@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -418,10 +419,34 @@ class _RideTrackingScreenState extends ConsumerState<RideTrackingScreen> {
         _gpsRoutePoints.add(_currentLocation!);
       });
 
-      const locationSettings = LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 2,
-      );
+      late final LocationSettings locationSettings;
+      if (defaultTargetPlatform == TargetPlatform.android) {
+        locationSettings = AndroidSettings(
+          accuracy: LocationAccuracy.high,
+          distanceFilter: 2,
+          forceLocationManager: false,
+          intervalDuration: const Duration(seconds: 2),
+          foregroundNotificationConfig: const ForegroundNotificationConfig(
+            notificationTitle: "RideMate Live Tracking",
+            notificationText: "Tracking ride in background...",
+            notificationIcon: AndroidResource(name: 'launch_background'),
+            enableWakeLock: true,
+          ),
+        );
+      } else if (defaultTargetPlatform == TargetPlatform.iOS || defaultTargetPlatform == TargetPlatform.macOS) {
+        locationSettings = AppleSettings(
+          accuracy: LocationAccuracy.high,
+          activityType: ActivityType.fitness,
+          distanceFilter: 2,
+          pauseLocationUpdatesAutomatically: false,
+          allowBackgroundLocationUpdates: true,
+        );
+      } else {
+        locationSettings = const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          distanceFilter: 2,
+        );
+      }
 
       _positionStreamSub?.cancel();
       _positionStreamSub = Geolocator.getPositionStream(locationSettings: locationSettings).listen(

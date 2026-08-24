@@ -78,7 +78,7 @@ class RideHistoryScreen extends ConsumerWidget {
               itemCount: rides.length + 1, // 1 for summary header card
               itemBuilder: (context, index) {
                 if (index == 0) {
-                  return _buildSummaryCard(totalDistance, totalRides, totalCost);
+                  return _buildSummaryCard(context, totalDistance, totalRides, totalCost);
                 }
 
                 final ride = rides[index - 1];
@@ -267,7 +267,7 @@ class RideHistoryScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildSummaryCard(double totalDistance, int totalRides, double totalCost) {
+  Widget _buildSummaryCard(BuildContext context, double totalDistance, int totalRides, double totalCost) {
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       elevation: 4,
@@ -321,6 +321,49 @@ class RideHistoryScreen extends ConsumerWidget {
                   iconColor: Colors.green.shade700,
                   label: 'Fuel Spent',
                   value: '₹${totalCost.toStringAsFixed(0)}',
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Row(
+                  children: [
+                    Icon(Icons.notifications_active_outlined, size: 16, color: Color(0xFF10B981)),
+                    SizedBox(width: 4),
+                    Text(
+                      'Background GPS Ready',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF10B981)),
+                    ),
+                  ],
+                ),
+                InkWell(
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(builder: (context) => const RideTrackingScreen()),
+                    );
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF10B981),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.play_arrow, size: 14, color: Colors.white),
+                        SizedBox(width: 3),
+                        Text(
+                          'Quick Start Tracking',
+                          style: TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
               ],
             ),

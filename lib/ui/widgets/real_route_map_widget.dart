@@ -57,6 +57,24 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
     _mapController = MapController();
     _manualWaypoints = List.from(widget.manualWaypoints ?? []);
     _manualRoadPolyline = widget.manualRoadPolyline ?? [];
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && widget.routePoints.length >= 2) {
+        try {
+          final bounds = LatLngBounds.fromPoints(widget.routePoints);
+          _mapController.fitCamera(
+            CameraFit.bounds(
+              bounds: bounds,
+              padding: const EdgeInsets.all(45),
+            ),
+          );
+        } catch (_) {}
+      } else if (mounted && widget.routePoints.length == 1) {
+        try {
+          _mapController.move(widget.routePoints.first, 15.0);
+        } catch (_) {}
+      }
+    });
   }
 
   @override
@@ -189,9 +207,9 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
   }
 
   LatLng _getCenterLocation() {
-    if (widget.userCurrentLocation != null) return widget.userCurrentLocation!;
     if (widget.routePoints.isNotEmpty) return widget.routePoints.last;
     if (_manualWaypoints.isNotEmpty) return _manualWaypoints.last;
+    if (widget.userCurrentLocation != null) return widget.userCurrentLocation!;
     return _defaultCenter;
   }
 
@@ -242,8 +260,9 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
     final center = _getCenterLocation();
 
     final List<Marker> markers = [];
+    final List<Polyline> polylines = [];
 
-    // Current User Location Marker
+    // User location marker
     if (widget.userCurrentLocation != null) {
       markers.add(
         Marker(
@@ -277,7 +296,72 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
       );
     }
 
-    if (widget.isManualMapMode) {
+    // Render widget.routePoints (Recorded Ride Polyline & Markers from History or Tracking)
+    if (widget.routePoints.isNotEmpty) {
+      if (widget.routePoints.length >= 2) {
+        polylines.add(
+          Polyline(
+            points: widget.routePoints,
+            strokeWidth: 5.5,
+            color: Colors.blue.shade600,
+            borderStrokeWidth: 2.0,
+            borderColor: Colors.blue.shade900,
+          ),
+        );
+      }
+
+      markers.add(
+        Marker(
+          point: widget.routePoints.first,
+          width: 38,
+          height: 38,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.green.shade600,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+              boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 4)],
+            ),
+            child: const Icon(Icons.play_arrow, color: Colors.white, size: 22),
+          ),
+        ),
+      );
+
+      if (widget.routePoints.length > 1) {
+        markers.add(
+          Marker(
+            point: widget.routePoints.last,
+            width: 42,
+            height: 42,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.redAccent,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+                boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 6)],
+              ),
+              child: const Icon(Icons.location_on, color: Colors.white, size: 24),
+            ),
+          ),
+        );
+      }
+    }
+
+    // Render interactive manual waypoints & polyline
+    if (widget.isManualMapMode && _manualWaypoints.isNotEmpty) {
+      if (_manualWaypoints.length >= 2) {
+        final polylinePoints = _manualRoadPolyline.isNotEmpty ? _manualRoadPolyline : _manualWaypoints;
+        polylines.add(
+          Polyline(
+            points: polylinePoints,
+            strokeWidth: 4.5,
+            color: Colors.indigo.shade600,
+            borderStrokeWidth: 1.5,
+            borderColor: Colors.indigo.shade900,
+          ),
+        );
+      }
+
       for (int i = 0; i < _manualWaypoints.length; i++) {
         final pt = _manualWaypoints[i];
         final isStart = i == 0;
@@ -305,57 +389,6 @@ class _RealRouteMapWidgetState extends State<RealRouteMapWidget> {
           ),
         );
       }
-    } else {
-      if (widget.routePoints.isNotEmpty) {
-        markers.add(
-          Marker(
-            point: widget.routePoints.first,
-            width: 36,
-            height: 36,
-            child: const Icon(Icons.trip_origin, color: Colors.green, size: 30),
-          ),
-        );
-        markers.add(
-          Marker(
-            point: widget.routePoints.last,
-            width: 44,
-            height: 44,
-            child: Container(
-              decoration: const BoxDecoration(
-                color: Colors.blueAccent,
-                shape: BoxShape.circle,
-                boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 6)],
-              ),
-              child: const Icon(Icons.navigation, color: Colors.white, size: 24),
-            ),
-          ),
-        );
-      }
-    }
-
-    final List<Polyline> polylines = [];
-    if (widget.isManualMapMode && _manualWaypoints.length >= 2) {
-      final polylinePoints = _manualRoadPolyline.isNotEmpty ? _manualRoadPolyline : _manualWaypoints;
-
-      polylines.add(
-        Polyline(
-          points: polylinePoints,
-          strokeWidth: 4.5,
-          color: Colors.blue.shade700,
-          borderStrokeWidth: 1.5,
-          borderColor: Colors.blue.shade900,
-        ),
-      );
-    } else if (widget.routePoints.length >= 2) {
-      polylines.add(
-        Polyline(
-          points: widget.routePoints,
-          strokeWidth: 4.5,
-          color: Colors.cyanAccent,
-          borderStrokeWidth: 2.0,
-          borderColor: Colors.blue.shade900,
-        ),
-      );
     }
 
     return Column(
@@ -633,6 +666,24 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
     _manualWaypoints = List.from(widget.manualWaypoints ?? []);
     _manualRoadPolyline = widget.manualRoadPolyline ?? [];
     _distanceKm = widget.currentDistanceKm;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && widget.routePoints.length >= 2) {
+        try {
+          final bounds = LatLngBounds.fromPoints(widget.routePoints);
+          _mapController.fitCamera(
+            CameraFit.bounds(
+              bounds: bounds,
+              padding: const EdgeInsets.all(50),
+            ),
+          );
+        } catch (_) {}
+      } else if (mounted && widget.routePoints.length == 1) {
+        try {
+          _mapController.move(widget.routePoints.first, 15.0);
+        } catch (_) {}
+      }
+    });
   }
 
   @override
@@ -756,9 +807,9 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
   }
 
   LatLng _getCenterLocation() {
-    if (widget.userCurrentLocation != null) return widget.userCurrentLocation!;
     if (widget.routePoints.isNotEmpty) return widget.routePoints.last;
     if (_manualWaypoints.isNotEmpty) return _manualWaypoints.last;
+    if (widget.userCurrentLocation != null) return widget.userCurrentLocation!;
     return _defaultCenter;
   }
 
@@ -784,6 +835,7 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
     final center = _getCenterLocation();
 
     final List<Marker> markers = [];
+    final List<Polyline> polylines = [];
 
     if (widget.userCurrentLocation != null) {
       markers.add(
@@ -818,7 +870,72 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
       );
     }
 
-    if (widget.isManualMapMode) {
+    // Render widget.routePoints in FullScreenMapScreen
+    if (widget.routePoints.isNotEmpty) {
+      if (widget.routePoints.length >= 2) {
+        polylines.add(
+          Polyline(
+            points: widget.routePoints,
+            strokeWidth: 6.0,
+            color: Colors.blue.shade600,
+            borderStrokeWidth: 2.0,
+            borderColor: Colors.blue.shade900,
+          ),
+        );
+      }
+
+      markers.add(
+        Marker(
+          point: widget.routePoints.first,
+          width: 40,
+          height: 40,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.green.shade600,
+              shape: BoxShape.circle,
+              border: Border.all(color: Colors.white, width: 2),
+              boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 4)],
+            ),
+            child: const Icon(Icons.play_arrow, color: Colors.white, size: 24),
+          ),
+        ),
+      );
+
+      if (widget.routePoints.length > 1) {
+        markers.add(
+          Marker(
+            point: widget.routePoints.last,
+            width: 44,
+            height: 44,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.redAccent,
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white, width: 2),
+                boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 6)],
+              ),
+              child: const Icon(Icons.location_on, color: Colors.white, size: 26),
+            ),
+          ),
+        );
+      }
+    }
+
+    // Render interactive manual waypoints & polyline
+    if (widget.isManualMapMode && _manualWaypoints.isNotEmpty) {
+      if (_manualWaypoints.length >= 2) {
+        final polylinePoints = _manualRoadPolyline.isNotEmpty ? _manualRoadPolyline : _manualWaypoints;
+        polylines.add(
+          Polyline(
+            points: polylinePoints,
+            strokeWidth: 5.5,
+            color: Colors.indigo.shade600,
+            borderStrokeWidth: 2.0,
+            borderColor: Colors.indigo.shade900,
+          ),
+        );
+      }
+
       for (int i = 0; i < _manualWaypoints.length; i++) {
         final pt = _manualWaypoints[i];
         final isStart = i == 0;
@@ -846,57 +963,6 @@ class _FullScreenMapScreenState extends State<FullScreenMapScreen> {
           ),
         );
       }
-    } else {
-      if (widget.routePoints.isNotEmpty) {
-        markers.add(
-          Marker(
-            point: widget.routePoints.first,
-            width: 40,
-            height: 40,
-            child: const Icon(Icons.trip_origin, color: Colors.green, size: 34),
-          ),
-        );
-        markers.add(
-          Marker(
-            point: widget.routePoints.last,
-            width: 48,
-            height: 48,
-            child: Container(
-              decoration: const BoxDecoration(
-                color: Colors.blueAccent,
-                shape: BoxShape.circle,
-                boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 6)],
-              ),
-              child: const Icon(Icons.navigation, color: Colors.white, size: 28),
-            ),
-          ),
-        );
-      }
-    }
-
-    final List<Polyline> polylines = [];
-    if (widget.isManualMapMode && _manualWaypoints.length >= 2) {
-      final polylinePoints = _manualRoadPolyline.isNotEmpty ? _manualRoadPolyline : _manualWaypoints;
-
-      polylines.add(
-        Polyline(
-          points: polylinePoints,
-          strokeWidth: 5.5,
-          color: Colors.blue.shade700,
-          borderStrokeWidth: 2.0,
-          borderColor: Colors.blue.shade900,
-        ),
-      );
-    } else if (widget.routePoints.length >= 2) {
-      polylines.add(
-        Polyline(
-          points: widget.routePoints,
-          strokeWidth: 5.5,
-          color: Colors.cyanAccent,
-          borderStrokeWidth: 2.0,
-          borderColor: Colors.blue.shade900,
-        ),
-      );
     }
 
     return Scaffold(
