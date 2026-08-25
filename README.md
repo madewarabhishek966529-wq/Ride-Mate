@@ -1,4 +1,3 @@
-
 # RemoteEye 👁️📱
 
 **RemoteEye** is a production-quality, 100% open-source & cloud-free Flutter application that mirrors one Android phone's screen to another Android phone in real time with optional remote touch control — **without requiring Firebase, AWS, or any third-party cloud platforms**.
